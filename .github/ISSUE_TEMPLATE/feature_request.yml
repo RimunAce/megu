@@ -1,0 +1,53 @@
+name: Feature request
+description: Suggest an improvement to MEGU
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start with the problem, not only the solution. MEGU favours features that improve
+        trust in the list, explain provider behaviour, or keep the app lightweight.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      placeholder: "When I watch offline, I cannot tell which edits will be sent later."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including how AniList itself or other apps handle this.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Browsing / discovery
+        - List editing / sync
+        - Playback / providers
+        - Schedule / reminders
+        - Offline behaviour
+        - Settings / accessibility
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true

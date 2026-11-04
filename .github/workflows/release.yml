@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint and test
+        run: |
+          npm run lint
+          npm test
+          cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build installers and draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "MEGU ${{ github.ref_name }}"
+          releaseBody: |
+            See [CHANGELOG.md](https://github.com/RimunAce/megu/blob/main/CHANGELOG.md) for what is new.
+
+            **Windows 10/11 x64.** Download the `-setup.exe` (NSIS) installer unless you prefer MSI.
+            `SHA256SUMS.txt` is attached to this release; verify the download before running it.
+            Builds are unsigned, so SmartScreen may warn. Choose **More info → Run anyway** only
+            when the checksum matches.
+          releaseDraft: true
+          prerelease: false
+
+      - name: Upload installers as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: megu-windows-installers
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+      - name: Publish checksums with the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $lines = Get-ChildItem src-tauri/target/release/bundle -Recurse -Include *.exe, *.msi |
+            Sort-Object Name |
+            ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" }
+          $lines | Set-Content -Path SHA256SUMS.txt -Encoding ascii
+          gh release upload $env:GITHUB_REF_NAME SHA256SUMS.txt --clobber --repo $env:GITHUB_REPOSITORY

@@ -1,0 +1,89 @@
+name: Bug report
+description: Something in MEGU is broken or behaves unexpectedly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve MEGU. Please remove personal information (AniList username,
+        tokens, private notes) from logs and screenshots.
+
+  - type: input
+    id: version
+    attributes:
+      label: MEGU version
+      description: Shown in the installer name or Settings about area.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 23H2 (build 22631)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Browsing / search
+        - AniList sign-in
+        - List editing / sync
+        - Continue watching / playback
+        - Airing schedule / reminders
+        - Offline behaviour
+        - Installer / startup
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened
+      description: Include error text and screenshots if possible.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider (only for playback issues)
+      options:
+        - Not applicable
+        - Anivexa
+        - AnimePahe
+        - Direct HLS
+        - Other
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I removed tokens and personal information from this report.
+          required: true

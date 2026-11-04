@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { stripTypeScriptTypes } from 'node:module';
+const mocks=`const isTauri=true;
+  const useAuthStore={getState:()=>globalThis.__manual.auth};
+  const syncNotice=(...args)=>globalThis.__manual.notices.push(args);
+  const gql=(...args)=>globalThis.__manual.gql(...args);
+  const saveListEntry=(...args)=>globalThis.__manual.save(...args);
+  const getPendingProgress=async()=>globalThis.__manual.pending;
+  const getListSnapshot=async()=>globalThis.__manual.snapshot;
+  const saveListSnapshot=async(_id, data)=>{globalThis.__manual.snapshot=data};
+  const completePendingProgress=async(_id, change)=>{globalThis.__manual.pending=globalThis.__manual.pending.filter(x=>x!==change)};`;
+const source=(await readFile('src/lib/manualSync.ts','utf8')).replace(/^import .*;\r?\n/gm,'');
+const code=stripTypeScriptTypes(`${mocks}\n${source}`);
+const {drainManualSync}=await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
+function setup(){const s={auth:{token:'token',viewer:{id:5}},notices:[],pending:[{media_id:42,base_progress:3,base_status:'CURRENT',progress:4}],snapshot:[{media:{id:42},progress:3}],remote:{status:'CURRENT',progress:3},writes:[]};s.gql=async()=>({Media:{mediaListEntry:s.remote}});s.save=async(...x)=>{s.writes.push(x)};globalThis.__manual=s;return s}
+test('automatically syncs a matching edit and updates local snapshot',async()=>{const s=setup();await drainManualSync(5,'token',()=>{});assert.equal(s.writes[0][2].progress,4);assert.equal(s.snapshot[0].progress,4);assert.equal(s.pending.length,0)});
+test('keeps conflicting remote edits for review',async()=>{const s=setup();s.remote.progress=9;await drainManualSync(5,'token',()=>{});assert.equal(s.writes.length,0);assert.equal(s.pending.length,1);assert.equal(s.notices[0][1],'error')});
+test('reconciles a previously saved edit without writing twice',async()=>{const s=setup();s.remote.progress=4;await drainManualSync(5,'token',()=>{});assert.equal(s.writes.length,0);assert.equal(s.pending.length,0);assert.equal(s.snapshot[0].progress,4)});
+test('keeps an edit when offline and retries later',async()=>{const s=setup();s.gql=async()=>{throw Error('offline')};await drainManualSync(5,'token',()=>{});assert.equal(s.pending.length,1);s.gql=async()=>({Media:{mediaListEntry:s.remote}});await drainManualSync(5,'token',()=>{});assert.equal(s.pending.length,0)});

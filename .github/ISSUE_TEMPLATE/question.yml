@@ -1,0 +1,16 @@
+name: Question
+description: Ask how something works or how to set MEGU up
+labels: ["question"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: MEGU version, Windows version, and what you already tried.
