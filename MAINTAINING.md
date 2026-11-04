@@ -22,7 +22,8 @@ After pushing the first commit to `https://github.com/RimunAce/megu`:
    - secret scanning and push protection;
    - CodeQL (default setup) if you want scheduled scanning.
 6. Discussions are optional. They suit “how do I…?” questions that are not bugs.
-7. Keep releases immutable. Upload the installers and `SHA256SUMS.txt`; do not commit binaries to the
+7. Under Settings, General, upload `docs/social-preview.jpg` as the social preview.
+8. Keep releases immutable. Upload the installers and `SHA256SUMS.txt`; do not commit binaries to the
    repository.
 
 ## Release checklist
