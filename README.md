@@ -13,6 +13,7 @@ you left off. It is built with Tauri and installs at about 16 MB.
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24c8db?logo=tauri&logoColor=white)](https://tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-3b82f6)](LICENSE)
 [![Status](https://img.shields.io/badge/status-beta-f59e0b)](#project-status)
+[![Release](https://img.shields.io/github/v/release/RimunAce/megu)](https://github.com/RimunAce/megu/releases/latest)
 [![CI](https://github.com/RimunAce/megu/actions/workflows/ci.yml/badge.svg)](https://github.com/RimunAce/megu/actions/workflows/ci.yml)
 
 [**Download**](https://github.com/RimunAce/megu/releases/latest) · [Features](#features) · [Build from source](#build-from-source) · [Contributing](CONTRIBUTING.md) · [Privacy](#privacy-and-your-data)

@@ -10,7 +10,8 @@ After pushing the first commit to `https://github.com/RimunAce/megu`:
    `anime`, `anilist`, `tauri`, `react`, `windows` and `desktop-app`. The website is optional.
 2. Under Actions, allow workflows. The `CI` workflow must pass before merging.
 3. Protect `main`:
-   - require a pull request (1 approval) and a passing `check` status;
+   - require a passing `check` status before merging;
+   - the repository allows direct pushes by the owner for now; require one approval once a second maintainer joins;
    - require branches to be up to date;
    - block force pushes and deletion;
    - optionally require linear history and signed commits.
