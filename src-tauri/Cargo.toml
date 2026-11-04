@@ -28,7 +28,7 @@ keyring = { version = "3", features = ["windows-native"] }
 sha2 = "0.10"
 base64 = "0.22"
 url = "2"
-rand = "0.8"
+rand = "0.10"
 tauri = { version = "2.12.5", features = ["unstable"] }
 tauri-plugin-log = "2"
 tauri-plugin-opener = "2"
