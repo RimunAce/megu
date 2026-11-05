@@ -68,8 +68,8 @@ jobs:
             See [CHANGELOG.md](https://github.com/RimunAce/megu/blob/main/CHANGELOG.md) for what is new.
 
             **Windows 10/11 x64.** Download the `-setup.exe` (NSIS) installer unless you prefer MSI.
-            If you are upgrading from MEGU 0.1.0, install this release manually. Later updates
-            can be checked in Settings; MSI installations continue to update manually.
+            NSIS installations of MEGU 0.1.1 and newer can check for updates in Settings.
+            Earlier versions and MSI installations update by downloading an installer.
             `SHA256SUMS.txt` is attached to this release; verify the download before running it.
             Builds are unsigned, so SmartScreen may warn. Choose **More info → Run anyway** only
             when the checksum matches.
