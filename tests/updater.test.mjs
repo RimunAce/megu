@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { stripTypeScriptTypes } from 'node:module';
+import { transformWithOxc } from 'vite';
 
 const source = (await readFile('src/lib/updater.ts', 'utf8')).replace(/^import .*;\r?\n/gm, '');
-const script = stripTypeScriptTypes(`const { invoke, isTauri, getVersion, check, create } = globalThis.updaterMocks;\n${source}`);
+const script = (await transformWithOxc(`const { invoke, isTauri, getVersion, check, create } = globalThis.updaterMocks;\n${source}`, 'updater.ts')).code;
 const storage = new Map();
 globalThis.localStorage = { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, String(v)) };
 globalThis.document = { querySelector: () => null };
@@ -66,4 +66,23 @@ test('failed downloads remain available for retry', async () => {
   await updater.downloadUpdate();
   assert.equal(updater.useUpdater.getState().phase, 'available');
   assert.match(updater.useUpdater.getState().error, /offline/);
+});
+
+test('available updates are refreshed after the check interval', async () => {
+  const before = calls;
+  updater.useUpdater.setState({ phase: 'available', lastChecked: Date.now() - 7 * 60 * 60 * 1000 });
+  await updater.automaticCheck();
+  assert.equal(calls, before + 1);
+});
+
+test('startup restores update availability even after a recent check', async () => {
+  storage.set('megu.updates.mode', 'check');
+  storage.set('megu.updates.lastChecked', String(Date.now()));
+  mockUpdate = { version: '0.5.0', close: async () => {} };
+  const fresh = await import(`data:text/javascript;base64,${Buffer.from(script).toString('base64')}#startup`);
+  const before = calls;
+  await fresh.initializeUpdater();
+  assert.equal(calls, before + 1);
+  assert.equal(fresh.useUpdater.getState().phase, 'available');
+  assert.equal(fresh.useUpdater.getState().latest, '0.5.0');
 });

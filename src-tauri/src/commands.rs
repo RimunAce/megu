@@ -241,8 +241,8 @@ pub fn player_fullscreen_state(window: tauri::Window) -> Result<bool, String> {
 
 #[tauri::command]
 pub fn restore_player_fullscreen(window: tauri::Window, was_fullscreen: bool) -> Result<(), String> {
-    if !was_fullscreen && window.is_fullscreen().map_err(|e| e.to_string())? {
-        window.set_fullscreen(false).map_err(|e| e.to_string())?;
+    if window.is_fullscreen().map_err(|e| e.to_string())? != was_fullscreen {
+        window.set_fullscreen(was_fullscreen).map_err(|e| e.to_string())?;
     }
     Ok(())
 }

@@ -36,13 +36,13 @@ export async function initializeUpdater() {
     const [version, configured] = await Promise.all([getVersion(), invoke<boolean>("updater_configured")]);
     set({ version });
     if (!configured) { set({ phase: "unavailable", error: "This build has no update verification key. Download a release from GitHub instead." }); return; }
-    await automaticCheck();
+    await automaticCheck(true);
   } catch (error) { set({ phase: "unavailable", error: `Updater unavailable: ${String(error)}` }); }
 }
 
-export async function automaticCheck() {
+export async function automaticCheck(startup = false) {
   const state = useUpdater.getState();
-  if (state.mode === "manual" || state.phase === "unavailable" || state.phase === "available" || state.phase === "ready" || (state.lastChecked && Date.now() - state.lastChecked < interval)) return;
+  if (state.mode === "manual" || state.phase === "unavailable" || state.phase === "ready" || (!(startup && !update) && state.lastChecked && Date.now() - state.lastChecked < interval)) return;
   await checkForUpdates();
 }
 
