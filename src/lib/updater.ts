@@ -13,6 +13,26 @@ type UpdateState = {
 const modeKey = "megu.updates.mode";
 const checkedKey = "megu.updates.lastChecked";
 const interval = 6 * 60 * 60 * 1000;
+function newerVersion(candidate: string, current: string): boolean {
+  const parse = (value: string) => {
+    const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(value);
+    return match ? { core: match.slice(1, 4).map(BigInt), pre: match[4]?.split(".") } : null;
+  };
+  const a = parse(candidate), b = parse(current);
+  if (!a || !b) return false;
+  for (let i = 0; i < 3; i++) if (a.core[i] !== b.core[i]) return a.core[i] > b.core[i];
+  if (!a.pre || !b.pre) return !a.pre && !!b.pre;
+  for (let i = 0; i < Math.max(a.pre.length, b.pre.length); i++) {
+    const left = a.pre[i], right = b.pre[i];
+    if (left === undefined || right === undefined) return right === undefined && left !== undefined;
+    if (left === right) continue;
+    const leftNumeric = /^\d+$/.test(left), rightNumeric = /^\d+$/.test(right);
+    if (leftNumeric && rightNumeric) return BigInt(left) > BigInt(right);
+    if (leftNumeric !== rightNumeric) return rightNumeric;
+    return left > right;
+  }
+  return false;
+}
 function storedMode(): UpdateMode {
   try { const value = localStorage.getItem(modeKey); return value === "manual" || value === "download" ? value : "check"; } catch { return "check"; }
 }
@@ -42,7 +62,7 @@ export async function initializeUpdater() {
 
 export async function automaticCheck(startup = false) {
   const state = useUpdater.getState();
-  if (state.mode === "manual" || state.phase === "unavailable" || state.phase === "ready" || (!(startup && !update) && state.lastChecked && Date.now() - state.lastChecked < interval)) return;
+  if (state.mode === "manual" || state.phase === "unavailable" || (!(startup && !update) && state.lastChecked && Date.now() - state.lastChecked < interval)) return;
   await checkForUpdates();
 }
 
@@ -50,16 +70,24 @@ export function checkForUpdates(): Promise<void> {
   if (pending) return pending;
   if (!isTauri() || useUpdater.getState().phase === "unavailable") return Promise.resolve();
   if (useUpdater.getState().phase === "downloading" || useUpdater.getState().phase === "installing") return Promise.resolve();
+  const downloaded = useUpdater.getState().phase === "ready" ? update : null;
   pending = (async () => {
     set({ phase: "checking", error: "" });
     try {
       const next = await check({ timeout: 30000 });
+      if (downloaded && next && !newerVersion(next.version, downloaded.version)) {
+        await next.close().catch(() => {});
+        const lastChecked = Date.now();
+        try { localStorage.setItem(checkedKey, String(lastChecked)); } catch { /* The downloaded update remains usable. */ }
+        set({ lastChecked, phase: "ready" });
+        return;
+      }
       if (update) await update.close().catch(() => {});
       update = next;
       const lastChecked = Date.now();
       try { localStorage.setItem(checkedKey, String(lastChecked)); } catch { /* Checking still works without persistence. */ }
       set({ lastChecked, phase: next ? "available" : "current", latest: next?.version ?? "", notes: next?.body ?? "" });
-    } catch (error) { set({ phase: "error", error: `Could not check for updates: ${String(error)}` }); }
+    } catch (error) { set({ phase: downloaded ? "ready" : "error", error: `Could not check for updates: ${String(error)}` }); }
   })().finally(() => { pending = null; });
   return pending.then(async () => { if (useUpdater.getState().phase === "available" && useUpdater.getState().mode === "download") await downloadUpdate(); });
 }

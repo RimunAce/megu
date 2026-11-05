@@ -11,9 +11,10 @@ globalThis.document = { querySelector: () => null };
 let calls = 0;
 let mockUpdate = null;
 let installAllowed = true;
+let checkFailure = false;
 globalThis.updaterMocks = {
   invoke: async (command) => { if (command === 'updater_install_allowed' && !installAllowed) throw new Error('Unsupported installer'); return true; }, isTauri: () => true, getVersion: async () => '0.1.0',
-  check: async () => { calls++; return mockUpdate; },
+  check: async () => { calls++; if (checkFailure) throw new Error('offline'); return mockUpdate; },
   create: (init) => { let state = init(); const store = () => state; store.getState = () => state; store.setState = (value) => { state = { ...state, ...(typeof value === 'function' ? value(state) : value) }; }; return store; },
 };
 const updater = await import(`data:text/javascript;base64,${Buffer.from(script).toString('base64')}`);
@@ -103,9 +104,35 @@ test('unsupported installers cannot launch the in-app installer', async () => {
   installAllowed = true;
 });
 
-test('a downloaded update can be replaced by a manual check', async () => {
-  const before = calls;
+test('a failed check preserves the downloaded update', async () => {
+  checkFailure = true;
   await updater.checkForUpdates();
+  checkFailure = false;
+  assert.equal(updater.useUpdater.getState().phase, 'ready');
+  assert.match(updater.useUpdater.getState().error, /offline/);
+});
+
+test('a same-version check preserves the downloaded update', async () => {
+  let closed = false;
+  mockUpdate = { version: '0.6.0', close: async () => { closed = true; } };
+  await updater.checkForUpdates();
+  assert.equal(updater.useUpdater.getState().phase, 'ready');
+  assert.equal(closed, true);
+});
+
+test('an older release does not replace a downloaded update', async () => {
+  mockUpdate = { version: '0.5.9', close: async () => {} };
+  await updater.checkForUpdates();
+  assert.equal(updater.useUpdater.getState().phase, 'ready');
+  assert.equal(updater.useUpdater.getState().latest, '0.6.0');
+});
+
+test('a downloaded update is refreshed after the interval', async () => {
+  mockUpdate = { version: '0.7.0', close: async () => {} };
+  updater.useUpdater.setState({ lastChecked: Date.now() - 7 * 60 * 60 * 1000 });
+  const before = calls;
+  await updater.automaticCheck();
   assert.equal(calls, before + 1);
   assert.equal(updater.useUpdater.getState().phase, 'available');
+  assert.equal(updater.useUpdater.getState().latest, '0.7.0');
 });
