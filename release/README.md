@@ -48,9 +48,8 @@ repository. Pushing a `v*` tag runs `.github/workflows/release.yml`, which build
 Windows and creates a draft release with them attached.
 
 ```powershell
-# Bump package.json, package-lock.json, Cargo.toml, Cargo.lock and tauri.conf.json,
-# update CHANGELOG.md, and merge the changes. Then:
-git commit -am "Release 0.1.1"
+# Follow the release checklist in MAINTAINING.md and merge the version bump.
+# On the updated main branch, tag the merged commit:
 git tag v0.1.1
-git push origin main --tags
+git push origin v0.1.1
 ```
