@@ -27,6 +27,13 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREMjI3OEI4NTlFMzc2QUUKUldTdWR1Tlp1SGdpM1NRRTJkYTlTRXYzOGtlcEp4eEpXL0wydW16eXV5eHRLRDYwcnFacVVPMWcK",
+      "endpoints": ["https://github.com/RimunAce/megu/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis", "msi"],

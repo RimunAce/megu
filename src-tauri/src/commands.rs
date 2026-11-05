@@ -227,6 +227,40 @@ fn validate_player_url(url: &str) -> Result<url::Url, String> {
 pub struct PlayerBounds { x: f64, y: f64, width: f64, height: f64 }
 
 #[tauri::command]
+pub fn updater_configured() -> bool {
+    serde_json::from_str::<serde_json::Value>(include_str!("../tauri.conf.json"))
+        .ok()
+        .and_then(|config| config.pointer("/plugins/updater/pubkey").and_then(|key| key.as_str()).map(|key| !key.trim().is_empty()))
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+pub fn updater_install_allowed(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    use tauri::utils::{config::BundleType, platform::bundle_type};
+    if !matches!(bundle_type(), Some(BundleType::Nsis)) {
+        return Err("In-app installation is available only for NSIS installations. Use the releases page to update manually.".into());
+    }
+    if app.get_webview("inline-player").is_some() || app.get_webview_window("megu-player").is_some() || app.get_webview_window("animepahe").is_some() {
+        return Err("Close the player and any AnimePahe window before installing an update.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn player_fullscreen_state(window: tauri::Window) -> Result<bool, String> {
+    window.is_fullscreen().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn restore_player_fullscreen(window: tauri::Window, was_fullscreen: bool) -> Result<(), String> {
+    if window.is_fullscreen().map_err(|e| e.to_string())? != was_fullscreen {
+        window.set_fullscreen(was_fullscreen).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn show_inline_player(window: tauri::Window, url: String, bounds: PlayerBounds, resume: f64, session: String, expected_duration: Option<f64>) -> Result<(), String> {
     use tauri::Manager;
     use tauri::Emitter;
