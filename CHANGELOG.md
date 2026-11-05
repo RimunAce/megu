@@ -6,6 +6,24 @@ All notable changes to MEGU are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-05
+
+### Added
+
+- Update settings with automatic or manual checks, optional background downloads, and signed
+  in-app installation for NSIS builds.
+- Signed updater artifacts in the Windows release workflow.
+
+### Fixed
+
+- Restore the previous window fullscreen state when closing the episode player.
+
+### Known limitations
+
+- Existing 0.1.0 users need to install this version manually before they can use in-app updates.
+- MSI installations must update manually from GitHub Releases.
+- Installers are not Windows code-signed, so SmartScreen may show a warning.
+
 ## [0.1.0] - 2026-11-04
 
 First public beta release.
@@ -44,5 +62,6 @@ First public beta release.
 - Streaming availability and playback tracking depend on third-party providers.
 - Builds are unsigned, so Windows SmartScreen may warn on first launch.
 
-[Unreleased]: ../../compare/v0.1.0...HEAD
+[Unreleased]: ../../compare/v0.1.1...HEAD
+[0.1.1]: ../../compare/v0.1.0...v0.1.1
 [0.1.0]: ../../releases/tag/v0.1.0
