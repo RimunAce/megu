@@ -35,11 +35,30 @@ jobs:
           npm test
           cargo test --manifest-path src-tauri/Cargo.toml
 
+      - name: Check updater signing configuration
+        shell: pwsh
+        env:
+          MEGU_UPDATER_PUBLIC_KEY: ${{ vars.MEGU_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if (-not $env:MEGU_UPDATER_PUBLIC_KEY -or -not $env:TAURI_SIGNING_PRIVATE_KEY) {
+            throw "Configure MEGU_UPDATER_PUBLIC_KEY and TAURI_SIGNING_PRIVATE_KEY before publishing a release."
+          }
+          $configuredKey = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).plugins.updater.pubkey
+          if ($configuredKey.Trim() -ne $env:MEGU_UPDATER_PUBLIC_KEY.Trim()) {
+            throw "MEGU_UPDATER_PUBLIC_KEY does not match the public key pinned in tauri.conf.json."
+          }
+
       - name: Build installers and draft release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MEGU_UPDATER_PUBLIC_KEY: ${{ vars.MEGU_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          args: --config src-tauri/tauri.release.conf.json
+          updaterJsonPreferNsis: true
           tagName: ${{ github.ref_name }}
           releaseName: "MEGU ${{ github.ref_name }}"
           releaseBody: |

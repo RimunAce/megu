@@ -10,6 +10,7 @@ import SettingsPage from "./pages/Settings";
 import SyncManager from "./components/SyncManager";
 import SchedulePage from "./pages/Schedule";
 import AiringReminders from "./components/AiringReminders";
+import UpdateManager from "./components/UpdateManager";
 import { restoreSession, useAppStore } from "./store/app";
 
 function App() {
@@ -35,6 +36,7 @@ function App() {
       <LoginModal />
       <SyncManager />
       <AiringReminders />
+      <UpdateManager />
     </div>
   );
 }

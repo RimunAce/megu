@@ -19,6 +19,7 @@ function enqueue(operation: () => Promise<void>) {
 
 export default function InlinePlayer({ option, onClose, record, resume }: { option: PlayerOption; onClose: () => void; record: PlaybackRecord; resume: number }) {
   const area = useRef<HTMLDivElement>(null);
+  const dialog = useRef<HTMLDivElement>(null);
   const session = useRef(crypto.randomUUID());
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ message: string; kind: string } | null>(null);
@@ -34,6 +35,19 @@ export default function InlinePlayer({ option, onClose, record, resume }: { opti
   const onAudioChange = useCallback((track: string) => { audioTrack.current = track; }, []);
   const onSubtitleChange = useCallback((track: string) => { subtitleTrack.current = track; }, []);
   const onDirectError = useCallback((message: string) => setError(message), []);
+
+  useEffect(() => {
+    const previousFullscreen: { value: boolean | null } = { value: null };
+    const player = dialog.current;
+    if (isTauri()) void enqueue(async () => { previousFullscreen.value = await invoke<boolean>("player_fullscreen_state"); }).catch(() => {});
+    return () => {
+      if (document.fullscreenElement && player?.contains(document.fullscreenElement)) void document.exitFullscreen().catch(() => {});
+      if (isTauri()) void enqueue(async () => {
+        await invoke("close_inline_player");
+        if (previousFullscreen.value !== null) await invoke("restore_player_fullscreen", { wasFullscreen: previousFullscreen.value });
+      }).catch(() => {});
+    };
+  }, []);
 
   useEffect(() => {
     const onNotice = (event: Event) => setNotice((event as CustomEvent<{ message: string; kind: string }>).detail);
@@ -109,7 +123,7 @@ export default function InlinePlayer({ option, onClose, record, resume }: { opti
     return () => { controller.abort(); progressHandler.current = () => {}; clearTimeout(timer); unlisten?.(); };
   }, [record, token, viewer, ignoreDurationHint, option.kind]);
 
-  return <div className="fixed inset-0 z-[100] flex flex-col bg-black" role="dialog" aria-modal="true" aria-label="Episode player">
+  return <div ref={dialog} className="fixed inset-0 z-[100] flex flex-col bg-black" role="dialog" aria-modal="true" aria-label="Episode player">
     <div className="flex shrink-0 items-center justify-between gap-4 bg-zinc-900 px-4 py-3">
       <span className="min-w-0 text-sm font-semibold">MEGU player {notice && <motion.span initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} role="status" className={`ml-3 inline-block ${notice.kind === "error" ? "text-amber-300" : "text-emerald-300"}`}>{notice.message}</motion.span>}{error && <span role="alert" className="ml-3 text-red-300">{error}</span>}{trackingSlow && !tracking && !error && <span role="status" className="ml-3 text-amber-300">Waiting for playback data; resume may not be available for this player. {option.kind === "embed" && !ignoreDurationHint && record.expectedDuration && <button onClick={() => { setIgnoreDurationHint(true); setTrackingSlow(false); }} className="underline">Retry without duration check</button>}</span>}</span>
       <button onClick={onClose} className="rounded bg-zinc-700 px-4 py-2 text-sm hover:bg-zinc-600">Close player</button>

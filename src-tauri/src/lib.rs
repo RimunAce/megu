@@ -12,6 +12,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_notification::init())
+    .plugin(tauri_plugin_updater::Builder::new().build())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -52,6 +53,9 @@ pub fn run() {
       commands::show_inline_player,
       commands::resize_inline_player,
       commands::close_inline_player,
+      commands::player_fullscreen_state,
+      commands::restore_player_fullscreen,
+      commands::updater_configured,
       stream_proxy::register_stream,
       stream_proxy::fetch_stream,
       stream_proxy::close_stream,
