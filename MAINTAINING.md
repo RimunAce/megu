@@ -29,16 +29,18 @@ After pushing the first commit to `https://github.com/RimunAce/megu`:
 ## Release checklist
 
 1. `npm run build`, `npm test`, `npm run lint`, `cargo test` in `src-tauri` all pass.
-2. Bump the version in **both** `package.json` and `src-tauri/tauri.conf.json`.
+2. Bump the version in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`,
+   `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json`.
 3. Update `CHANGELOG.md` (move items out of *Unreleased*, set the date).
 4. `npm run tauri build`; smoke-test the installed app, not just the raw binary:
    - first-run login, My List, an offline edit, schedule and a playback provider;
    - Start menu entry reads **MEGU** and the setup icon is the MEGU mark.
-5. Copy `MEGU_<version>_x64-setup.exe`, `MEGU_<version>_x64_en-US.msi` and `SHA256SUMS.txt`
-   into `release/` for attachment.
-6. Commit, tag `v<version>`, push `main` and the tag. The `Release` workflow builds on Windows
-   and creates a **draft** release.
-7. Review the draft, attach the checksums, and publish. Announce the download link.
+5. Confirm the updater signing keys and repository variable are configured as described in
+   `release/README.md`.
+6. Commit and merge the version bump, then tag the merged commit `v<version>` and push the tag.
+   The `Release` workflow builds on Windows and creates a **draft** release.
+7. Verify the draft's installers, updater signatures, `latest.json`, and checksums before publishing.
+   Announce the download link.
 
 ## Code signing
 
@@ -62,8 +64,8 @@ secrets. Never commit `.pfx` or `.p12` files; `.gitignore` covers them on purpos
 - **CSP**: `app.security.csp` is `null` (Tauri default). A production CSP is desirable, but it must
   be tested against HLS playback, the Tauri IPC bridge and local images before shipping; a wrong
   policy breaks the player silently. Track this before a 1.0 release.
-- **Auto-update**: not implemented. Users must download new installers; document this in release
-  notes. Adding `tauri-plugin-updater` requires signed update artifacts and a public key in the app.
+- **Auto-update**: only NSIS installations from 0.1.1 onward can install signed updates in-app.
+  MSI and earlier installations need a manual installer; see `release/README.md` for signing setup.
 - **Identifier**: `com.megu.app` ends in `.app`, which only matters for macOS. Changing it now would
   move `%APPDATA%\com.megu.app` and orphan local data; revisit if a macOS build is ever planned.
 - **All-users install**: the NSIS installer defaults to per-user install. If you switch to
