@@ -10,8 +10,9 @@ globalThis.localStorage = { getItem: (k) => storage.get(k) ?? null, setItem: (k,
 globalThis.document = { querySelector: () => null };
 let calls = 0;
 let mockUpdate = null;
+let installAllowed = true;
 globalThis.updaterMocks = {
-  invoke: async () => true, isTauri: () => true, getVersion: async () => '0.1.0',
+  invoke: async (command) => { if (command === 'updater_install_allowed' && !installAllowed) throw new Error('Unsupported installer'); return true; }, isTauri: () => true, getVersion: async () => '0.1.0',
   check: async () => { calls++; return mockUpdate; },
   create: (init) => { let state = init(); const store = () => state; store.getState = () => state; store.setState = (value) => { state = { ...state, ...(typeof value === 'function' ? value(state) : value) }; }; return store; },
 };
@@ -85,4 +86,26 @@ test('startup restores update availability even after a recent check', async () 
   assert.equal(calls, before + 1);
   assert.equal(fresh.useUpdater.getState().phase, 'available');
   assert.equal(fresh.useUpdater.getState().latest, '0.5.0');
+});
+
+test('unsupported installers cannot launch the in-app installer', async () => {
+  globalThis.document.querySelector = () => null;
+  let installed = false;
+  mockUpdate = { version: '0.6.0', close: async () => {}, download: async () => {}, install: async () => { installed = true; } };
+  updater.useUpdater.setState({ phase: 'current' });
+  updater.setUpdateMode('check');
+  await updater.checkForUpdates();
+  await updater.downloadUpdate();
+  installAllowed = false;
+  await updater.installUpdate();
+  assert.equal(installed, false);
+  assert.match(updater.useUpdater.getState().error, /Unsupported installer/);
+  installAllowed = true;
+});
+
+test('a downloaded update can be replaced by a manual check', async () => {
+  const before = calls;
+  await updater.checkForUpdates();
+  assert.equal(calls, before + 1);
+  assert.equal(updater.useUpdater.getState().phase, 'available');
 });

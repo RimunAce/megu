@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -41,6 +40,10 @@ jobs:
           MEGU_UPDATER_PUBLIC_KEY: ${{ vars.MEGU_UPDATER_PUBLIC_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ($env:GITHUB_REF -ne "refs/tags/v$version") {
+            throw "Release tag must match the application version v$version."
+          }
           if (-not $env:MEGU_UPDATER_PUBLIC_KEY -or -not $env:TAURI_SIGNING_PRIVATE_KEY) {
             throw "Configure MEGU_UPDATER_PUBLIC_KEY and TAURI_SIGNING_PRIVATE_KEY before publishing a release."
           }
@@ -50,7 +53,7 @@ jobs:
           }
 
       - name: Build installers and draft release
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@944946e3e4cac6603d1fe8f514171e9ecd3c78aa # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MEGU_UPDATER_PUBLIC_KEY: ${{ vars.MEGU_UPDATER_PUBLIC_KEY }}

@@ -235,6 +235,19 @@ pub fn updater_configured() -> bool {
 }
 
 #[tauri::command]
+pub fn updater_install_allowed(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    use tauri::utils::{config::BundleType, platform::bundle_type};
+    if !matches!(bundle_type(), Some(BundleType::Nsis)) {
+        return Err("In-app installation is available only for NSIS installations. Use the releases page to update manually.".into());
+    }
+    if app.get_webview("inline-player").is_some() || app.get_webview_window("megu-player").is_some() || app.get_webview_window("animepahe").is_some() {
+        return Err("Close the player and any AnimePahe window before installing an update.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub fn player_fullscreen_state(window: tauri::Window) -> Result<bool, String> {
     window.is_fullscreen().map_err(|e| e.to_string())
 }
@@ -296,10 +309,7 @@ pub async fn resize_inline_player(app: tauri::AppHandle, bounds: PlayerBounds) -
 #[tauri::command]
 pub async fn close_inline_player(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
-    if let Some(player) = app.get_webview("inline-player") {
-        let _ = player.eval("if (document.fullscreenElement) document.exitFullscreen().catch(() => {});");
-        player.close().map_err(|e| e.to_string())?;
-    }
+    if let Some(player) = app.get_webview("inline-player") { player.close().map_err(|e| e.to_string())?; }
     Ok(())
 }
 

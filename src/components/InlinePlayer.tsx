@@ -41,8 +41,12 @@ export default function InlinePlayer({ option, onClose, record, resume }: { opti
     const player = dialog.current;
     if (isTauri()) void enqueue(async () => { previousFullscreen.value = await invoke<boolean>("player_fullscreen_state"); }).catch(() => {});
     return () => {
-      if (document.fullscreenElement && player?.contains(document.fullscreenElement)) void document.exitFullscreen().catch(() => {});
+      const exitFullscreen = async () => {
+        if (document.fullscreenElement && player?.contains(document.fullscreenElement)) await document.exitFullscreen();
+      };
+      if (!isTauri()) { void exitFullscreen().catch(() => {}); return; }
       if (isTauri()) void enqueue(async () => {
+        await exitFullscreen().catch(() => {});
         await invoke("close_inline_player");
         if (previousFullscreen.value !== null) await invoke("restore_player_fullscreen", { wasFullscreen: previousFullscreen.value });
       }).catch(() => {});

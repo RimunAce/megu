@@ -49,7 +49,7 @@ export async function automaticCheck(startup = false) {
 export function checkForUpdates(): Promise<void> {
   if (pending) return pending;
   if (!isTauri() || useUpdater.getState().phase === "unavailable") return Promise.resolve();
-  if (useUpdater.getState().phase === "ready" || useUpdater.getState().phase === "downloading" || useUpdater.getState().phase === "installing") return Promise.resolve();
+  if (useUpdater.getState().phase === "downloading" || useUpdater.getState().phase === "installing") return Promise.resolve();
   pending = (async () => {
     set({ phase: "checking", error: "" });
     try {
@@ -67,18 +67,29 @@ export function checkForUpdates(): Promise<void> {
 export async function downloadUpdate() {
   if (!update || useUpdater.getState().phase !== "available") return;
   set({ phase: "downloading", downloaded: 0, total: null, error: "" });
+  let downloaded = 0;
+  let lastPublished = 0;
   try {
     await update.download((event) => {
       if (event.event === "Started") set({ total: event.data.contentLength ?? null });
-      if (event.event === "Progress") set((state) => ({ downloaded: state.downloaded + event.data.chunkLength }));
+      if (event.event === "Progress") {
+        downloaded += event.data.chunkLength;
+        const now = performance.now();
+        if (now - lastPublished >= 250) { lastPublished = now; set({ downloaded }); }
+      }
     });
-    set({ phase: "ready" });
+    set({ phase: "ready", downloaded });
   } catch (error) { set({ phase: "available", error: `Download failed: ${String(error)}` }); }
 }
 
 export async function installUpdate() {
   if (!update || useUpdater.getState().phase !== "ready") return;
-  if (document.querySelector('[aria-label="Episode player"]')) { set({ error: "Close the player before installing an update." }); return; }
+  if (document.querySelector('[role="dialog"][aria-label="Episode player"]')) { set({ error: "Close the player before installing an update." }); return; }
   set({ phase: "installing", error: "" });
-  try { await update.install(); } catch (error) { set({ phase: "ready", error: `Installation failed: ${String(error)}` }); }
+  try { await invoke("updater_install_allowed"); } catch (error) { set({ phase: "ready", error: String(error) }); return; }
+  try { await update.install(); } catch (error) {
+    await update.close().catch(() => {});
+    update = null;
+    set({ phase: "error", error: `Installation failed: ${String(error)}. Check for updates to try again.` });
+  }
 }

@@ -32,7 +32,7 @@ export default function UpdateSettings() {
     {state.notes && <details className="mt-3 text-sm"><summary className="cursor-pointer font-medium">Release notes</summary><p className="mt-2 whitespace-pre-wrap break-words text-zinc-300">{state.notes}</p></details>}
     {(state.error || linkError) && <p role="alert" className="mt-3 break-words text-sm text-red-300">{state.error || linkError}</p>}
     <div className="mt-4 flex flex-wrap gap-2">
-      <button type="button" className={button} disabled={busy || state.phase === "unavailable" || state.phase === "ready"} onClick={() => void checkForUpdates()}>Check for updates</button>
+      <button type="button" className={button} disabled={busy || state.phase === "unavailable"} onClick={() => void checkForUpdates()}>Check for updates</button>
       {state.phase === "available" && <button type="button" className={button} onClick={() => void downloadUpdate()}>Download update</button>}
       {state.phase === "ready" && <button type="button" className={button} onClick={() => void installUpdate()}>Install and restart</button>}
       <button type="button" className={button} onClick={() => { setLinkError(""); void openStreamUrl("https://github.com/RimunAce/megu/releases/latest").catch((error: unknown) => setLinkError(`Could not open releases: ${String(error)}`)); }}>Open releases</button>

@@ -56,6 +56,7 @@ pub fn run() {
       commands::player_fullscreen_state,
       commands::restore_player_fullscreen,
       commands::updater_configured,
+      commands::updater_install_allowed,
       stream_proxy::register_stream,
       stream_proxy::fetch_stream,
       stream_proxy::close_stream,
