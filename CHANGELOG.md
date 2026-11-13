@@ -6,6 +6,12 @@ All notable changes to MEGU are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-13
+
+### Changed
+
+- Updated frontend runtime dependencies and build tooling.
+
 ## [0.1.1] - 2026-11-05
 
 ### Added
@@ -62,6 +68,7 @@ First public beta release.
 - Streaming availability and playback tracking depend on third-party providers.
 - Builds are unsigned, so Windows SmartScreen may warn on first launch.
 
-[Unreleased]: ../../compare/v0.1.1...HEAD
+[Unreleased]: ../../compare/v0.1.2...HEAD
+[0.1.2]: ../../compare/v0.1.1...v0.1.2
 [0.1.1]: ../../compare/v0.1.0...v0.1.1
 [0.1.0]: ../../releases/tag/v0.1.0

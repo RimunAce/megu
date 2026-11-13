@@ -1,7 +1,7 @@
 {
   "name": "megu",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A fast Windows anime app for AniList: discovery, list sync and playback.",
   "author": "MEGU contributors",
   "license": "MIT",
