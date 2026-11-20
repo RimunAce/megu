@@ -3,9 +3,18 @@ export const PROVIDERS = ["anikoto", "reanime", "mkissa", "animegg", "animenosub
 export type Provider = typeof PROVIDERS[number];
 export type Audio = "sub" | "dub";
 export interface Episode { id: string; number: number; title: string | null }
-interface ProviderResponse { episodes?: Partial<Record<Audio, Episode[]>>; error?: string }
-interface Stream { url?: string; embedUrl?: string; embed?: string; type?: string; server?: string; referer?: string; headers?: Record<string, string>; subtitles?: { url?: string; label?: string; language?: string; srclang?: string; format?: string; default?: boolean }[] }
-export interface PlayerOption { url: string; label: string; kind: "embed" | "hls"; referer?: string; subtitles?: { url: string; label: string; language: string; format: "srt" | "vtt"; default: boolean }[] }
+export interface ProviderResponse { episodes?: Partial<Record<Audio, Episode[]>>; error?: string }
+export interface Stream { url?: string; embedUrl?: string; embed?: string; type?: string; server?: string; referer?: string; headers?: Record<string, string>; subtitles?: { url?: string; label?: string; language?: string; srclang?: string; format?: string; default?: boolean }[] }
+export interface SubtitleTrack { url: string; label: string; language: string; format: "srt" | "vtt"; default: boolean }
+export interface PlayerOption {
+  url: string;
+  label: string;
+  kind: "embed" | "hls";
+  referer?: string;
+  origin?: string;
+  userAgent?: string;
+  subtitles?: SubtitleTrack[];
+}
 
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   let response: Response;
@@ -48,38 +57,97 @@ export function safeEmbedUrl(value: unknown): string | null {
   } catch { return null; }
 }
 
+function headerValue(headers: Record<string, string> | undefined, name: string): string | undefined {
+  if (!headers) return undefined;
+  const target = name.toLowerCase();
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === target && typeof v === "string" && v.trim()) return v.trim();
+  }
+  return undefined;
+}
+
+function parseSubtitles(stream: Stream): SubtitleTrack[] {
+  if (!Array.isArray(stream.subtitles)) return [];
+  const seen = new Set<string>();
+  return stream.subtitles.flatMap((track) => {
+    const link = safeEmbedUrl(track?.url);
+    if (!link || seen.has(link)) return [];
+    const rawFormat = typeof track?.format === "string" ? track.format.toLowerCase() : "";
+    const pathname = new URL(link).pathname.toLowerCase();
+    const format = rawFormat === "srt" || rawFormat === "vtt"
+      ? rawFormat
+      : pathname.endsWith(".vtt") ? "vtt" : pathname.endsWith(".srt") ? "srt" : "";
+    if (!format) return [];
+    seen.add(link);
+    const label = typeof track.label === "string" && track.label.trim()
+      ? track.label.trim()
+      : typeof track.language === "string" && track.language.trim()
+        ? track.language.trim()
+        : "Subtitles";
+    const language = typeof track.srclang === "string" && track.srclang.trim()
+      ? track.srclang.trim()
+      : typeof track.language === "string" && /^[a-z]{2,3}(-[a-z0-9]+)*$/i.test(track.language.trim())
+        ? track.language.trim()
+        : "en";
+    return [{ url: link, label, language, format: format as "srt" | "vtt", default: track.default === true }];
+  });
+}
+
+export function optionHost(url: string): string {
+  try { return new URL(url).hostname.toLowerCase().replace(/\.$/, ""); } catch { return "unknown"; }
+}
+
 export function embedOptions(streams: Stream[]): PlayerOption[] {
   const seen = new Set<string>();
   const labels = new Map<string, number>();
-  const options = streams.flatMap((stream) => {
+  const direct: PlayerOption[] = [];
+  const embeds: PlayerOption[] = [];
+
+  for (const stream of streams) {
+    const type = typeof stream.type === "string" ? stream.type.toLowerCase() : "";
+    const rawDirect = safeEmbedUrl(stream.url);
+    const path = rawDirect ? new URL(rawDirect).pathname.toLowerCase() : "";
+    const isHls = type === "hls" || type === "m3u8" || (type !== "embed" && path.endsWith(".m3u8"));
+    if (rawDirect && isHls && !seen.has(rawDirect)) {
+      seen.add(rawDirect);
+      const serverName = typeof stream.server === "string" && stream.server.trim() ? stream.server.trim() : "Player";
+      const kind = "hls" as const;
+      const base = `${serverName} · Direct HLS`;
+      const count = (labels.get(base) ?? 0) + 1;
+      labels.set(base, count);
+      const referer = safeEmbedUrl(stream.referer ?? headerValue(stream.headers, "referer")) ?? undefined;
+      const rawOrigin = safeEmbedUrl(headerValue(stream.headers, "origin"));
+      const origin = rawOrigin ? new URL(rawOrigin).origin : undefined;
+      const userAgent = headerValue(stream.headers, "user-agent");
+      direct.push({
+        url: rawDirect,
+        label: count === 1 ? base : `${base} #${count}`,
+        kind,
+        referer,
+        origin,
+        userAgent,
+        subtitles: parseSubtitles(stream),
+      });
+    }
+  }
+
+  for (const stream of streams) {
     const url = safeEmbedUrl(stream.embedUrl ?? stream.embed ?? (stream.type === "embed" ? stream.url : null));
-    if (!url || new URL(url).pathname.toLowerCase().endsWith(".m3u8") || seen.has(url)) return [];
+    if (!url || seen.has(url)) continue;
+    const pathname = new URL(url).pathname.toLowerCase();
+    if (pathname.endsWith(".m3u8") || pathname.endsWith(".mp4") || pathname.endsWith(".webm")) continue;
     seen.add(url);
     const name = typeof stream.server === "string" && stream.server.trim() ? stream.server.trim() : `Player ${seen.size}`;
     const count = (labels.get(name) ?? 0) + 1;
     labels.set(name, count);
-    return [{ url, label: count === 1 ? name : `${name} #${count}`, kind: "embed" as const }];
-  });
-  // The provider's plain /stream pages only work inside its own iframe; the
-  // /videojs/ variant is the one that plays in a top-level MEGU player window.
-  options.sort((a, b) => Number(!a.url.includes("/videojs/")) - Number(!b.url.includes("/videojs/")));
-  const direct: PlayerOption[] = [];
-  for (const stream of streams) {
-    if (stream.type !== "hls") continue;
-    const url = safeEmbedUrl(stream.url);
-    if (!url || seen.has(url)) continue;
-    seen.add(url);
-    const base = `${typeof stream.server === "string" && stream.server.trim() ? stream.server.trim() : "Player"} · Direct HLS`;
-    const count = (labels.get(base) ?? 0) + 1; labels.set(base, count);
-    const subtitles = Array.isArray(stream.subtitles) ? stream.subtitles.flatMap((track) => {
-      const link = safeEmbedUrl(track?.url);
-      const format = typeof track?.format === "string" ? track.format.toLowerCase() : "";
-      if (!link || !["srt", "vtt"].includes(format) || new URL(link).host !== new URL(url).host) return [];
-      const label = typeof track.label === "string" ? track.label : typeof track.language === "string" ? track.language : "Subtitles";
-      const language = typeof track.srclang === "string" ? track.srclang : "en";
-      return [{ url: link, label, language, format: format as "srt" | "vtt", default: track.default === true }];
-    }) : [];
-    direct.push({ url, label: count === 1 ? base : `${base} #${count}`, kind: "hls", referer: safeEmbedUrl(stream.referer ?? stream.headers?.Referer ?? stream.headers?.referer) ?? undefined, subtitles });
+    embeds.push({ url, label: count === 1 ? name : `${name} #${count}`, kind: "embed" });
   }
-  return [...options, ...direct];
+
+  // The provider's plain /stream pages often rely on parent iframe context;
+  // /videojs/ variants tend to work reliably in a top-level MEGU player webview.
+  embeds.sort((a, b) => Number(!a.url.includes("/videojs/")) - Number(!b.url.includes("/videojs/")));
+
+  // Prefer ad-free native HLS streams before third-party embeds. Direct MP4 is
+  // intentionally omitted until MEGU can stream ranged MP4 without buffering it whole.
+  return [...direct, ...embeds];
 }

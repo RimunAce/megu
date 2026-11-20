@@ -53,6 +53,8 @@ pub fn run() {
       commands::show_inline_player,
       commands::resize_inline_player,
       commands::close_inline_player,
+      commands::record_provider_health,
+      commands::get_provider_health,
       commands::player_fullscreen_state,
       commands::restore_player_fullscreen,
       commands::updater_configured,

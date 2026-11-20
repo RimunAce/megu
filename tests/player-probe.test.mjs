@@ -59,3 +59,21 @@ test('routes resume and telemetry through two sandboxed frame levels',()=>{
   for(let i=0;i<8;i++){now+=500;timers[2].forEach(fn=>fn());timers[1].forEach(fn=>fn());timers[0].forEach(fn=>fn())}
   assert.equal(v.currentTime,120);assert.equal(JSON.parse(docs[0].title.slice(17)).time,120);
 });
+test('reports challenge health state when a verification page is detected',()=>{
+  const source=template.replaceAll('__MEGU_EXPECTED_DURATION__','0');
+  let now=1000;const timers=[];
+  const root={};root.top=root;root.addEventListener=()=>{};
+  const topDoc={title:'Just a moment...',querySelectorAll:()=>[],querySelector:(sel)=>sel.includes('cf-turnstile')?{}:null,body:{innerText:'Checking your browser'}};
+  const globalBase={Date:{now:()=>now},Number,JSON,Math,Map,getComputedStyle:()=>({display:'block',visibility:'visible'}),innerWidth:1000,innerHeight:600};
+  vm.runInNewContext(source,{...globalBase,window:root,document:topDoc,setInterval:fn=>timers.push(fn)});
+  now+=500;timers.forEach(fn=>fn());
+  assert.match(topDoc.title,/^__MEGU_HEALTH__/);
+  assert.equal(JSON.parse(topDoc.title.slice(15)).state,'challenge');
+});
+test('reports dead health state when the visible video emits a fatal media error',()=>{
+  const v=video();v.readyState=2;v.error={code:4};
+  const s=simulation({topVideo:v});
+  s.tick();
+  assert.match(s.topDoc.title,/^__MEGU_HEALTH__/);
+  assert.equal(JSON.parse(s.topDoc.title.slice(15)).state,'dead');
+});

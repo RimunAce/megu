@@ -27,17 +27,37 @@ export default function DirectHlsPlayer({ option, resume, audio, savedAudioTrack
 
   useEffect(() => {
     const streamSession = crypto.randomUUID();
+    const media = video.current;
     let disposed = false;
     let registered = false;
     let hls: import("hls.js").default | null = null;
+    let seekListener: (() => void) | null = null;
     const start = async () => {
-      const media = video.current;
       if (!media) return;
       if (isTauri()) {
-        await invoke("register_stream", { session: streamSession, url: option.url, referer: option.referer ?? null });
+        const extraHosts = (option.subtitles ?? []).map((track) => track.url);
+        await invoke("register_stream", {
+          session: streamSession,
+          url: option.url,
+          referer: option.referer ?? null,
+          origin: option.origin ?? null,
+          userAgent: option.userAgent ?? null,
+          extraHosts,
+        });
         registered = true;
         if (disposed) { await invoke("close_stream", { session: streamSession }); return; }
       }
+      setSubtitleSession(streamSession);
+
+      const seek = () => {
+        if (resume > 0 && Number.isFinite(media.duration) && media.duration > resume && media.seekable.length) {
+          media.currentTime = resume;
+          media.removeEventListener("canplay", seek);
+        }
+      };
+      seekListener = seek;
+      media.addEventListener("canplay", seek);
+
       const module = await import("hls.js");
       const Hls = module.default;
       if (disposed) return;
@@ -73,9 +93,15 @@ export default function DirectHlsPlayer({ option, resume, audio, savedAudioTrack
         }
       }
 
-      hls = new Hls({ ...(isTauri() ? { loader: TauriLoader } : {}), startPosition: resume > 0 ? resume : -1 });
+      hls = new Hls({
+        ...(isTauri() ? { loader: TauriLoader } : {}),
+        startPosition: resume > 0 ? resume : -1,
+        fragLoadingMaxRetry: 2,
+        manifestLoadingMaxRetry: 1,
+        levelLoadingMaxRetry: 1,
+      });
       hlsRef.current = hls;
-      hls.on(Hls.Events.ERROR, (_event, data) => { if (data.fatal && !disposed) onError(`Direct stream failed: ${data.response?.text || data.details}. Try another player.`); });
+      hls.on(Hls.Events.ERROR, (_event, data) => { if (data.fatal && !disposed) onError(`Direct stream failed: ${data.response?.text || data.details}.`); });
       hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_event, data) => {
         if (disposed || !hls) return;
         const tracks = data.audioTracks.map((track, id) => ({ id, name: track.name || track.lang || `Audio ${id + 1}` }));
@@ -86,15 +112,14 @@ export default function DirectHlsPlayer({ option, resume, audio, savedAudioTrack
       });
       hls.attachMedia(media);
       hls.loadSource(option.url);
-      setSubtitleSession(streamSession);
-      const seek = () => { if (resume > 0 && Number.isFinite(media.duration) && media.duration > resume && media.seekable.length) { media.currentTime = resume; media.removeEventListener("canplay", seek); } };
-      media.addEventListener("canplay", seek);
       void media.play().catch(() => {});
 
     };
     void start().catch((error: unknown) => { if (!disposed) onError(error instanceof Error ? error.message : String(error)); });
     return () => {
       disposed = true;
+      if (media && seekListener) media.removeEventListener("canplay", seekListener);
+      if (media && option.kind === "hls") { media.removeAttribute("src"); media.load(); }
       hls?.destroy(); hlsRef.current = null;
       if (registered) void invoke("close_stream", { session: streamSession }).catch(() => {});
     };
