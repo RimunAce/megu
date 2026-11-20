@@ -123,6 +123,17 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             opened_at TEXT NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (user_id, media_id)
         );
+        CREATE TABLE IF NOT EXISTS provider_health (
+            provider TEXT NOT NULL,
+            server_host TEXT NOT NULL,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            failure_count INTEGER NOT NULL DEFAULT 0,
+            consecutive_failures INTEGER NOT NULL DEFAULT 0,
+            avg_ttff_ms INTEGER,
+            last_success_at INTEGER,
+            last_failure_at INTEGER,
+            PRIMARY KEY (provider, server_host)
+        );
         ",
     )
     .map_err(|e| format!("migrate: {e}"))?;
@@ -291,6 +302,84 @@ pub fn delete_local_entry(conn: &Connection, media_id: i64) -> Result<(), String
     Ok(())
 }
 
+// ─── Provider health telemetry ───────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProviderHealthRow {
+    pub provider: String,
+    pub server_host: String,
+    pub success_count: i64,
+    pub failure_count: i64,
+    pub consecutive_failures: i64,
+    pub avg_ttff_ms: Option<i64>,
+    pub last_success_at: Option<i64>,
+    pub last_failure_at: Option<i64>,
+}
+
+pub fn record_provider_health(
+    conn: &Connection,
+    provider: &str,
+    server_host: &str,
+    ok: bool,
+    ttff_ms: Option<i64>,
+    now_secs: i64,
+) -> Result<(), String> {
+    if ok {
+        let clamped_ttff = ttff_ms.map(|v| v.clamp(0, 120_000));
+        conn.execute(
+            "INSERT INTO provider_health (provider, server_host, success_count, failure_count, consecutive_failures, avg_ttff_ms, last_success_at, last_failure_at)
+             VALUES (?1, ?2, 1, 0, 0, ?3, ?4, NULL)
+             ON CONFLICT(provider, server_host) DO UPDATE SET
+               success_count = success_count + 1,
+               consecutive_failures = 0,
+               avg_ttff_ms = CASE
+                 WHEN excluded.avg_ttff_ms IS NULL THEN avg_ttff_ms
+                 WHEN avg_ttff_ms IS NULL THEN excluded.avg_ttff_ms
+                 ELSE CAST((avg_ttff_ms * 3 + excluded.avg_ttff_ms) / 4 AS INTEGER)
+               END,
+               last_success_at = excluded.last_success_at",
+            params![provider, server_host, clamped_ttff, now_secs],
+        )
+        .map_err(|e| format!("record_provider_health: {e}"))?;
+    } else {
+        conn.execute(
+            "INSERT INTO provider_health (provider, server_host, success_count, failure_count, consecutive_failures, avg_ttff_ms, last_success_at, last_failure_at)
+             VALUES (?1, ?2, 0, 1, 1, NULL, NULL, ?3)
+             ON CONFLICT(provider, server_host) DO UPDATE SET
+               failure_count = failure_count + 1,
+               consecutive_failures = consecutive_failures + 1,
+               last_failure_at = excluded.last_failure_at",
+            params![provider, server_host, now_secs],
+        )
+        .map_err(|e| format!("record_provider_health: {e}"))?;
+    }
+    Ok(())
+}
+
+pub fn get_provider_health(conn: &Connection) -> Result<Vec<ProviderHealthRow>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT provider, server_host, success_count, failure_count, consecutive_failures, avg_ttff_ms, last_success_at, last_failure_at
+             FROM provider_health",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(ProviderHealthRow {
+                provider: r.get(0)?,
+                server_host: r.get(1)?,
+                success_count: r.get(2)?,
+                failure_count: r.get(3)?,
+                consecutive_failures: r.get(4)?,
+                avg_ttff_ms: r.get(5)?,
+                last_success_at: r.get(6)?,
+                last_failure_at: r.get(7)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod migration_tests {
     use super::*;
@@ -335,5 +424,23 @@ mod migration_tests {
         drop(migrated);
         drop(legacy);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn provider_health_tracks_streaks_and_resets_on_success() {
+        let db = Connection::open_in_memory().unwrap();
+        migrate(&db).unwrap();
+        record_provider_health(&db, "anipm", "cdn.example.org", false, None, 1000).unwrap();
+        record_provider_health(&db, "anipm", "cdn.example.org", false, None, 1010).unwrap();
+        let rows = get_provider_health(&db).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].failure_count, 2);
+        assert_eq!(rows[0].consecutive_failures, 2);
+        record_provider_health(&db, "anipm", "cdn.example.org", true, Some(2000), 1020).unwrap();
+        record_provider_health(&db, "anipm", "cdn.example.org", true, Some(1000), 1030).unwrap();
+        let rows = get_provider_health(&db).unwrap();
+        assert_eq!(rows[0].success_count, 2);
+        assert_eq!(rows[0].consecutive_failures, 0);
+        assert_eq!(rows[0].avg_ttff_ms, Some(1750));
     }
 }

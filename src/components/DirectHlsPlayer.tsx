@@ -27,17 +27,62 @@ export default function DirectHlsPlayer({ option, resume, audio, savedAudioTrack
 
   useEffect(() => {
     const streamSession = crypto.randomUUID();
+    const media = video.current;
     let disposed = false;
     let registered = false;
     let hls: import("hls.js").default | null = null;
+    let mp4BlobUrl: string | null = null;
+    let mediaErrorListener: (() => void) | null = null;
+    let seekListener: (() => void) | null = null;
     const start = async () => {
-      const media = video.current;
       if (!media) return;
       if (isTauri()) {
-        await invoke("register_stream", { session: streamSession, url: option.url, referer: option.referer ?? null });
+        const extraHosts = (option.subtitles ?? []).map((track) => track.url);
+        await invoke("register_stream", {
+          session: streamSession,
+          url: option.url,
+          referer: option.referer ?? null,
+          origin: option.origin ?? null,
+          userAgent: option.userAgent ?? null,
+          extraHosts,
+        });
         registered = true;
         if (disposed) { await invoke("close_stream", { session: streamSession }); return; }
       }
+      setSubtitleSession(streamSession);
+
+      const seek = () => {
+        if (resume > 0 && Number.isFinite(media.duration) && media.duration > resume && media.seekable.length) {
+          media.currentTime = resume;
+          media.removeEventListener("canplay", seek);
+        }
+      };
+      seekListener = seek;
+      media.addEventListener("canplay", seek);
+
+      if (option.kind === "mp4") {
+        mediaErrorListener = () => {
+          if (!disposed) onError("Direct MP4 stream failed to play. Trying another source.");
+        };
+        media.addEventListener("error", mediaErrorListener);
+        if (isTauri()) {
+          // For direct MP4 via Tauri without headers we can first try direct src if no referer/origin/UA;
+          // when headers are required, fetch via stream proxy only for small files or fail cleanly to next source.
+          if (!option.referer && !option.origin && !option.userAgent) {
+            media.src = option.url;
+          } else {
+            const buffer = await invoke<ArrayBuffer>("fetch_stream", { session: streamSession, url: option.url, rangeStart: null, rangeEnd: null });
+            if (disposed) return;
+            mp4BlobUrl = URL.createObjectURL(new Blob([buffer], { type: "video/mp4" }));
+            media.src = mp4BlobUrl;
+          }
+        } else {
+          media.src = option.url;
+        }
+        void media.play().catch(() => {});
+        return;
+      }
+
       const module = await import("hls.js");
       const Hls = module.default;
       if (disposed) return;
@@ -73,9 +118,15 @@ export default function DirectHlsPlayer({ option, resume, audio, savedAudioTrack
         }
       }
 
-      hls = new Hls({ ...(isTauri() ? { loader: TauriLoader } : {}), startPosition: resume > 0 ? resume : -1 });
+      hls = new Hls({
+        ...(isTauri() ? { loader: TauriLoader } : {}),
+        startPosition: resume > 0 ? resume : -1,
+        fragLoadingMaxRetry: 2,
+        manifestLoadingMaxRetry: 1,
+        levelLoadingMaxRetry: 1,
+      });
       hlsRef.current = hls;
-      hls.on(Hls.Events.ERROR, (_event, data) => { if (data.fatal && !disposed) onError(`Direct stream failed: ${data.response?.text || data.details}. Try another player.`); });
+      hls.on(Hls.Events.ERROR, (_event, data) => { if (data.fatal && !disposed) onError(`Direct stream failed: ${data.response?.text || data.details}.`); });
       hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_event, data) => {
         if (disposed || !hls) return;
         const tracks = data.audioTracks.map((track, id) => ({ id, name: track.name || track.lang || `Audio ${id + 1}` }));
@@ -86,15 +137,16 @@ export default function DirectHlsPlayer({ option, resume, audio, savedAudioTrack
       });
       hls.attachMedia(media);
       hls.loadSource(option.url);
-      setSubtitleSession(streamSession);
-      const seek = () => { if (resume > 0 && Number.isFinite(media.duration) && media.duration > resume && media.seekable.length) { media.currentTime = resume; media.removeEventListener("canplay", seek); } };
-      media.addEventListener("canplay", seek);
       void media.play().catch(() => {});
 
     };
     void start().catch((error: unknown) => { if (!disposed) onError(error instanceof Error ? error.message : String(error)); });
     return () => {
       disposed = true;
+      if (media && seekListener) media.removeEventListener("canplay", seekListener);
+      if (media && mediaErrorListener) media.removeEventListener("error", mediaErrorListener);
+      if (media && option.kind === "mp4") { media.removeAttribute("src"); media.load(); }
+      if (mp4BlobUrl) URL.revokeObjectURL(mp4BlobUrl);
       hls?.destroy(); hlsRef.current = null;
       if (registered) void invoke("close_stream", { session: streamSession }).catch(() => {});
     };

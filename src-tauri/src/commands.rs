@@ -260,11 +260,89 @@ pub fn restore_player_fullscreen(window: tauri::Window, was_fullscreen: bool) ->
     Ok(())
 }
 
+fn same_site_host(candidate: &str, allowed: &str) -> bool {
+    let a = candidate.trim_end_matches('.').to_ascii_lowercase();
+    let b = allowed.trim_end_matches('.').to_ascii_lowercase();
+    if a == b {
+        return true;
+    }
+    let registrable = |host: &str| -> Option<String> {
+        let parts: Vec<&str> = host.split('.').filter(|p| !p.is_empty()).collect();
+        if parts.len() < 2 {
+            return None;
+        }
+        Some(format!("{}.{}", parts[parts.len() - 2], parts[parts.len() - 1]))
+    };
+    matches!((registrable(&a), registrable(&b)), (Some(x), Some(y)) if x == y)
+}
+
+fn is_allowed_embed_navigation(target: &url::Url, initial_host: &str) -> bool {
+    if target.as_str() == "about:blank" {
+        return true;
+    }
+    let Ok(valid) = validate_player_url(target.as_str()) else {
+        return false;
+    };
+    let Some(host) = valid.host_str() else {
+        return false;
+    };
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    if same_site_host(&host, initial_host) {
+        return true;
+    }
+    // Allow human-verification challenge hosts so Cloudflare / Turnstile can complete.
+    host == "challenges.cloudflare.com"
+        || host.ends_with(".cloudflare.com")
+        || host == "hcaptcha.com"
+        || host.ends_with(".hcaptcha.com")
+        || host == "recaptcha.net"
+        || host.ends_with(".recaptcha.net")
+        || host == "ddos-guard.net"
+        || host.ends_with(".ddos-guard.net")
+}
+
+#[tauri::command]
+pub fn record_provider_health(
+    state: State<'_, Db>,
+    provider: String,
+    server_host: String,
+    ok: bool,
+    ttff_ms: Option<i64>,
+) -> Result<(), String> {
+    let provider = provider.trim().to_ascii_lowercase();
+    let server_host = server_host.trim().to_ascii_lowercase();
+    if provider.is_empty()
+        || provider.len() > 64
+        || server_host.is_empty()
+        || server_host.len() > 200
+        || !provider.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err("Invalid provider health record".into());
+    }
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let conn = lock(&state)?;
+    db::record_provider_health(&conn, &provider, &server_host, ok, ttff_ms, now_secs)
+}
+
+#[tauri::command]
+pub fn get_provider_health(state: State<'_, Db>) -> Result<Vec<db::ProviderHealthRow>, String> {
+    let conn = lock(&state)?;
+    db::get_provider_health(&conn)
+}
+
 #[tauri::command]
 pub async fn show_inline_player(window: tauri::Window, url: String, bounds: PlayerBounds, resume: f64, session: String, expected_duration: Option<f64>) -> Result<(), String> {
     use tauri::Manager;
     use tauri::Emitter;
     let url = validate_player_url(&url)?;
+    let initial_host = url
+        .host_str()
+        .ok_or("Invalid player link")?
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
     if let Some(old) = window.get_webview("inline-player") { old.close().map_err(|e| e.to_string())?; }
     // The provider receives no Tauri capabilities. All telemetry, including
     // messages relayed from visible player frames, remains untrusted.
@@ -279,13 +357,23 @@ pub async fn show_inline_player(window: tauri::Window, url: String, bounds: Play
         .replace("__MEGU_EXPECTED_DURATION__", &expected.to_string());
     window.add_child(
         tauri::webview::WebviewBuilder::new("inline-player", tauri::WebviewUrl::External(url))
+            .additional_browser_args("--autoplay-policy=no-user-gesture-required")
             .initialization_script_for_all_frames(script)
+            .on_new_window(|_url, _features| tauri::webview::NewWindowResponse::Deny)
+            .on_navigation(move |target| is_allowed_embed_navigation(target, &initial_host))
             .on_document_title_changed(move |webview, title| {
                 if let Some(payload) = title.strip_prefix("__MEGU_PROGRESS__") {
                     if payload.len() > 512 { return; }
                     if let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) {
                         if value.get("session").and_then(|v| v.as_str()) == Some(session_id.as_str()) {
                             let _ = webview.emit_to("main", "player-progress", value);
+                        }
+                    }
+                } else if let Some(payload) = title.strip_prefix("__MEGU_HEALTH__") {
+                    if payload.len() > 512 { return; }
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) {
+                        if value.get("session").and_then(|v| v.as_str()) == Some(session_id.as_str()) {
+                            let _ = webview.emit_to("main", "player-health", value);
                         }
                     }
                 }
@@ -362,7 +450,7 @@ pub async fn open_animepahe(app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg(test)]
 mod player_url_tests {
-    use super::{validate_player_url, complete_pending_progress_in_db};
+    use super::{complete_pending_progress_in_db, is_allowed_embed_navigation, validate_player_url};
 
     #[test]
     fn accepts_public_https_only() {
@@ -373,6 +461,26 @@ mod player_url_tests {
         assert!(validate_player_url("https://user:pass@megaplay.buzz/").is_err());
         assert!(validate_player_url("https://megaplay.buzz:8443/").is_err());
         assert!(validate_player_url("file:///C:/secret").is_err());
+    }
+
+    #[test]
+    fn embed_navigation_allows_same_site_and_challenges_and_blocks_ads() {
+        assert!(is_allowed_embed_navigation(
+            &url::Url::parse("https://cdn.megaplay.buzz/videojs/123").unwrap(),
+            "megaplay.buzz"
+        ));
+        assert!(is_allowed_embed_navigation(
+            &url::Url::parse("https://challenges.cloudflare.com/turnstile").unwrap(),
+            "megaplay.buzz"
+        ));
+        assert!(!is_allowed_embed_navigation(
+            &url::Url::parse("https://popads-redirect.example.com/offer").unwrap(),
+            "megaplay.buzz"
+        ));
+        assert!(!is_allowed_embed_navigation(
+            &url::Url::parse("https://127.0.0.1/evil").unwrap(),
+            "megaplay.buzz"
+        ));
     }
 
     #[test]

@@ -10,16 +10,43 @@
   let bound = null, sought = false, targetPosition = initialPosition;
   let active = isTop, last = '', lastSent = 0;
   let selectedLeaf = null, chooseAt = 0, lastPosition = initialPosition, selectedSeen = 0;
+  let lastHealth = '', lastHealthSent = 0, lastMediaError = null;
+  let reportedPlaying = false;
+  const startedAt = Date.now();
   const candidates = new Map();
   const routes = new Map();
   const plausibleDuration = (value) => Number.isFinite(value) && value > 0 && value <= 86400 && (!expectedDuration || (value >= expectedDuration * 0.5 && value <= expectedDuration * 2.5));
 
   function visibleVideo() {
+    if (typeof document.querySelectorAll !== 'function') return null;
     return [...document.querySelectorAll('video')].find((v) => {
       const rect = v.getBoundingClientRect();
       const style = getComputedStyle(v);
       return rect.width >= 20 && rect.height >= 20 && style.display !== 'none' && style.visibility !== 'hidden';
     }) || null;
+  }
+
+  function looksLikeChallenge() {
+    try {
+      const title = typeof document.title === 'string' ? document.title.toLowerCase() : '';
+      if (title.includes('just a moment') || title.includes('attention required') || title.includes('verify you are human') || title.includes('ddos-guard')) return true;
+      if (typeof document.querySelector === 'function') {
+        if (document.querySelector('iframe[src*="challenges.cloudflare.com"], #challenge-form, #cf-challenge-running, .cf-turnstile, .g-recaptcha, .h-captcha')) return true;
+      }
+      const bodyText = document.body && typeof document.body.innerText === 'string' ? document.body.innerText.slice(0, 1200).toLowerCase() : '';
+      if (bodyText.includes('checking your browser') || bodyText.includes('verify you are human') || bodyText.includes('performing security verification')) return true;
+    } catch {}
+    return false;
+  }
+
+  function looksLikeErrorPage() {
+    try {
+      const title = typeof document.title === 'string' ? document.title.toLowerCase() : '';
+      if (/\b(404|403|410|500|502|503|504)\b/.test(title) || title.includes('not found') || title.includes('access denied') || title.includes('video unavailable')) return true;
+      const bodyText = document.body && typeof document.body.innerText === 'string' ? document.body.innerText.slice(0, 1000).toLowerCase() : '';
+      if (bodyText.length > 0 && bodyText.length < 400 && (bodyText.includes('file was deleted') || bodyText.includes('video not found') || bodyText.includes('no longer available') || bodyText.includes('404 not found') || bodyText.includes('access denied'))) return true;
+    } catch {}
+    return false;
   }
 
   function send(payload, force) {
@@ -30,14 +57,41 @@
     else window.parent.postMessage({ marker, session, leaf, type: 'progress', ...payload }, '*');
   }
 
+  function sendHealth(state, detail, force = false) {
+    const payload = { session, state, detail: typeof detail === 'string' ? detail.slice(0, 160) : '' };
+    const encoded = JSON.stringify(payload);
+    if ((encoded === lastHealth && !force) || (!force && Date.now() - lastHealthSent < 1000)) return;
+    lastHealth = encoded; lastHealthSent = Date.now();
+    if (isTop) document.title = '__MEGU_HEALTH__' + encoded;
+    else window.parent.postMessage({ marker, session, leaf, type: 'health', state, detail: payload.detail }, '*');
+  }
+
   function report(force = false) {
     const video = visibleVideo();
-    if (!video || !plausibleDuration(video.duration)) return;
+    if (!video) {
+      if (looksLikeChallenge()) {
+        sendHealth('challenge', 'Verification required in player');
+      } else if (!reportedPlaying && Date.now() - startedAt > 2500 && looksLikeErrorPage()) {
+        sendHealth('dead', 'Embed returned an error page');
+      }
+      return;
+    }
     if (bound !== video) {
       if (bound && Number.isFinite(bound.currentTime)) targetPosition = bound.currentTime;
-      bound = video; sought = false;
+      bound = video; sought = false; lastMediaError = null;
       for (const name of ['pause', 'seeked', 'ended']) video.addEventListener(name, () => report(true));
+      video.addEventListener('error', () => {
+        const code = video.error && typeof video.error.code === 'number' ? video.error.code : 0;
+        lastMediaError = code ? `Media error ${code}` : 'Video playback error';
+        sendHealth('dead', lastMediaError, true);
+      });
     }
+    if (video.error) {
+      const code = typeof video.error.code === 'number' ? video.error.code : 0;
+      sendHealth('dead', code ? `Media error ${code}` : 'Video playback error');
+      return;
+    }
+    if (!plausibleDuration(video.duration)) return;
     const ready = video.readyState >= 2 && video.seekable.length > 0;
     if (!isTop && !active) {
       if (ready) window.parent.postMessage({ marker, session, leaf, type: 'candidate', duration: video.duration }, '*');
@@ -48,6 +102,9 @@
       const target = Math.min(targetPosition, Math.max(0, video.duration - 1));
       try { video.currentTime = target; sought = Math.abs(video.currentTime - target) < 1; } catch { return; }
       if (!sought) return;
+    }
+    if (!reportedPlaying && (!video.paused || video.currentTime > 0 || video.readyState >= 3)) {
+      reportedPlaying = true;
     }
     send({ session, time: video.currentTime, duration: video.duration, paused: video.paused }, force || (!isTop && Date.now() - lastSent >= 2000));
   }
@@ -77,7 +134,13 @@
     if (!routes.has(data.leaf) && routes.size >= 32) return;
     routes.set(data.leaf, event.source);
     if (!isTop) {
-      if (data.type === 'candidate' || data.type === 'progress') window.parent.postMessage(data, '*');
+      if (data.type === 'candidate' || data.type === 'progress' || data.type === 'health') window.parent.postMessage(data, '*');
+      return;
+    }
+    if (data.type === 'health') {
+      if (!visibleVideo() && (data.state === 'challenge' || data.state === 'dead')) {
+        sendHealth(data.state, typeof data.detail === 'string' ? data.detail : '', data.state === 'dead');
+      }
       return;
     }
     if (data.type === 'candidate') {
@@ -91,13 +154,15 @@
       if (!Number.isFinite(data.time) || !plausibleDuration(data.duration) || typeof data.paused !== 'boolean' || data.time < 0 || data.time > data.duration + 1) return;
       selectedSeen = Date.now();
       lastPosition = data.time;
+      reportedPlaying = true;
       send({ session, time: data.time, duration: data.duration, paused: data.paused }, false);
     }
   });
 
   setInterval(() => {
     report();
-    if (!isTop || !chooseAt || Date.now() < chooseAt || visibleVideo()) return;
+    if (!isTop) return;
+    if (!chooseAt || Date.now() < chooseAt || visibleVideo()) return;
     if (selectedLeaf && Date.now() - selectedSeen < 10000) return;
     const available = [...candidates].filter(([, value]) => Date.now() - value.at < 2000);
     available.sort((a, b) => b[1].duration - a[1].duration);
