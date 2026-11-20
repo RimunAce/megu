@@ -17,20 +17,17 @@ test('distinguishes servers returned with duplicate names',()=>{
   const list=embedOptions([{server:'Mirror',embed:'https://example.com/a'},{server:'Mirror',embed:'https://example.com/b'}]);
   assert.deepEqual(list.map(x=>x.label),['Mirror','Mirror #2']);
 });
-test('prefers direct HLS and MP4 over embeds and allows cross-host public subtitles',()=>{
+test('prefers direct HLS over embeds and allows cross-host public subtitles',()=>{
   const list=embedOptions([
     {type:'embed',server:'Embed',url:'https://example.org/embed'},
-    {type:'mp4',server:'Direct',url:'https://mp4.example.org/ep1.mp4',headers:{Referer:'https://provider.example.org/',Origin:'https://provider.example.org','User-Agent':'Custom/1.0'}},
     {type:'hls',server:'Source',url:'https://cdn.example.org/master.m3u8',referer:'https://provider.example.org/',subtitles:[
       {url:'https://cdn.example.org/sub.srt',format:'srt',label:'English',srclang:'en'},
       {url:'https://127.0.0.1/sub.srt',format:'srt'},
       {url:'https://subs.other.example.org/en.vtt',label:'English Alt',srclang:'en'}
     ]},
   ]);
-  assert.deepEqual(list.map(x=>x.kind),['hls','mp4','embed']);
+  assert.deepEqual(list.map(x=>x.kind),['hls','embed']);
   assert.equal(list[0].subtitles.length,2);
   assert.equal(list[0].subtitles[1].format,'vtt');
   assert.equal(list[0].referer,'https://provider.example.org/');
-  assert.equal(list[1].origin,'https://provider.example.org');
-  assert.equal(list[1].userAgent,'Custom/1.0');
 });

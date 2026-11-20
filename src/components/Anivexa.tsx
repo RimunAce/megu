@@ -38,6 +38,8 @@ export default function Anivexa({ mediaId, title, cover, durationMinutes }: { me
   const triedProviders = useRef<Set<Provider>>(new Set());
   const autoProbedEpisodesFor = useRef<string | null>(null);
   const failoverAbort = useRef<AbortController | null>(null);
+  const selectionRef = useRef({ mediaId, provider, audio, episodeNumber: selected?.number ?? null });
+  selectionRef.current = { mediaId, provider, audio, episodeNumber: selected?.number ?? null };
 
   const refreshHealth = useCallback(async () => {
     const rows = await getProviderHealth();
@@ -65,7 +67,7 @@ export default function Anivexa({ mediaId, title, cover, durationMinutes }: { me
   const streams = useQuery({ queryKey: ["anivexaStreams", mediaId, provider, audio, selected?.id], queryFn: ({ signal }) => getStreams(mediaId, provider, audio, selected!, signal), enabled: !!selected, staleTime: 0, retry: false });
   const list = episodes.data?.episodes?.[audio];
   const options = useMemo(() => rankPlayerOptions(provider, embedOptions(streams.data ?? []), health), [provider, streams.data, health]);
-  const autoProbedStreamsFor = useRef<string | null>(null);
+  const autoProbedStreamsFor = useRef<Set<string>>(new Set());
 
   // If a selected episode has no usable players (or streams request errored)
   // on the current provider, automatically probe another provider for that episode.
@@ -74,8 +76,7 @@ export default function Anivexa({ mediaId, title, cover, durationMinutes }: { me
     const noPlayers = !streams.error && Array.isArray(streams.data) && options.length === 0;
     if (!streams.error && !noPlayers) return;
     const key = `${mediaId}:${provider}:${audio}:${selected.number}`;
-    if (autoProbedStreamsFor.current === key) return;
-    autoProbedStreamsFor.current = key;
+    if (autoProbedStreamsFor.current.has(key)) return;
     const controller = new AbortController();
     void findFallbackProviderSources({
       mediaId,
@@ -85,13 +86,17 @@ export default function Anivexa({ mediaId, title, cover, durationMinutes }: { me
       health,
       signal: controller.signal,
     }).then((fallback) => {
-      if (!fallback || controller.signal.aborted) return;
+      if (controller.signal.aborted) return;
+      autoProbedStreamsFor.current.add(key);
+      const active = selectionRef.current;
+      if (active.mediaId !== mediaId || active.provider !== provider || active.audio !== audio || active.episodeNumber !== selected.number) return;
+      if (!fallback) return;
       setAutoFallbackNotice(`No usable player on ${provider} for Episode ${selected.number}; switched to ${fallback.provider}.`);
       setProvider(fallback.provider);
       setSelected(fallback.episode);
       setPlayer(fallback.options[0]?.url ?? null);
     });
-    return () => controller.abort();
+    return;
   }, [selected, streams.isFetching, streams.error, streams.data, options.length, playing, mediaId, provider, audio, health]);
 
   // If the initially selected provider has no episodes or errored (and the user
@@ -112,7 +117,10 @@ export default function Anivexa({ mediaId, title, cover, durationMinutes }: { me
       signal: controller.signal,
     }).then((found) => {
       if (!found || controller.signal.aborted) return;
-      queryClient.setQueryData(["anivexaEpisodes", mediaId, found.provider], { episodes: { [audio]: found.episodes } });
+      queryClient.setQueryData(["anivexaEpisodes", mediaId, found.provider], (previous: { episodes?: Partial<Record<Audio, Episode[]>> } | undefined) => ({
+        ...previous,
+        episodes: { ...previous?.episodes, [audio]: found.episodes },
+      }));
       setAutoFallbackNotice(`Switched automatically from ${provider} to ${found.provider} (${found.episodes.length} ${audio} episodes available).`);
       setProvider(found.provider);
     });

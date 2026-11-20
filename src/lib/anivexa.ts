@@ -9,7 +9,7 @@ export interface SubtitleTrack { url: string; label: string; language: string; f
 export interface PlayerOption {
   url: string;
   label: string;
-  kind: "embed" | "hls" | "mp4";
+  kind: "embed" | "hls";
   referer?: string;
   origin?: string;
   userAgent?: string;
@@ -108,12 +108,11 @@ export function embedOptions(streams: Stream[]): PlayerOption[] {
     const rawDirect = safeEmbedUrl(stream.url);
     const path = rawDirect ? new URL(rawDirect).pathname.toLowerCase() : "";
     const isHls = type === "hls" || type === "m3u8" || (type !== "embed" && path.endsWith(".m3u8"));
-    const isMp4 = type === "mp4" || type === "direct" || (type !== "embed" && (path.endsWith(".mp4") || path.endsWith(".webm")));
-    if (rawDirect && (isHls || isMp4) && !seen.has(rawDirect)) {
+    if (rawDirect && isHls && !seen.has(rawDirect)) {
       seen.add(rawDirect);
       const serverName = typeof stream.server === "string" && stream.server.trim() ? stream.server.trim() : "Player";
-      const kind = isHls ? "hls" : "mp4";
-      const base = `${serverName} · ${kind === "hls" ? "Direct HLS" : "Direct MP4"}`;
+      const kind = "hls" as const;
+      const base = `${serverName} · Direct HLS`;
       const count = (labels.get(base) ?? 0) + 1;
       labels.set(base, count);
       const referer = safeEmbedUrl(stream.referer ?? headerValue(stream.headers, "referer")) ?? undefined;
@@ -148,7 +147,7 @@ export function embedOptions(streams: Stream[]): PlayerOption[] {
   // /videojs/ variants tend to work reliably in a top-level MEGU player webview.
   embeds.sort((a, b) => Number(!a.url.includes("/videojs/")) - Number(!b.url.includes("/videojs/")));
 
-  // Prefer ad-free native direct streams (HLS first, then MP4) before third-party embeds.
-  direct.sort((a, b) => Number(a.kind !== "hls") - Number(b.kind !== "hls"));
+  // Prefer ad-free native HLS streams before third-party embeds. Direct MP4 is
+  // intentionally omitted until MEGU can stream ranged MP4 without buffering it whole.
   return [...direct, ...embeds];
 }

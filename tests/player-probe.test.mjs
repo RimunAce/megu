@@ -71,7 +71,7 @@ test('reports challenge health state when a verification page is detected',()=>{
   assert.equal(JSON.parse(topDoc.title.slice(15)).state,'challenge');
 });
 test('reports dead health state when the visible video emits a fatal media error',()=>{
-  const v=video();v.error={code:4};
+  const v=video();v.readyState=2;v.error={code:4};
   const s=simulation({topVideo:v});
   s.tick();
   assert.match(s.topDoc.title,/^__MEGU_HEALTH__/);

@@ -31,8 +31,6 @@ export default function DirectHlsPlayer({ option, resume, audio, savedAudioTrack
     let disposed = false;
     let registered = false;
     let hls: import("hls.js").default | null = null;
-    let mp4BlobUrl: string | null = null;
-    let mediaErrorListener: (() => void) | null = null;
     let seekListener: (() => void) | null = null;
     const start = async () => {
       if (!media) return;
@@ -59,29 +57,6 @@ export default function DirectHlsPlayer({ option, resume, audio, savedAudioTrack
       };
       seekListener = seek;
       media.addEventListener("canplay", seek);
-
-      if (option.kind === "mp4") {
-        mediaErrorListener = () => {
-          if (!disposed) onError("Direct MP4 stream failed to play. Trying another source.");
-        };
-        media.addEventListener("error", mediaErrorListener);
-        if (isTauri()) {
-          // For direct MP4 via Tauri without headers we can first try direct src if no referer/origin/UA;
-          // when headers are required, fetch via stream proxy only for small files or fail cleanly to next source.
-          if (!option.referer && !option.origin && !option.userAgent) {
-            media.src = option.url;
-          } else {
-            const buffer = await invoke<ArrayBuffer>("fetch_stream", { session: streamSession, url: option.url, rangeStart: null, rangeEnd: null });
-            if (disposed) return;
-            mp4BlobUrl = URL.createObjectURL(new Blob([buffer], { type: "video/mp4" }));
-            media.src = mp4BlobUrl;
-          }
-        } else {
-          media.src = option.url;
-        }
-        void media.play().catch(() => {});
-        return;
-      }
 
       const module = await import("hls.js");
       const Hls = module.default;
@@ -144,9 +119,7 @@ export default function DirectHlsPlayer({ option, resume, audio, savedAudioTrack
     return () => {
       disposed = true;
       if (media && seekListener) media.removeEventListener("canplay", seekListener);
-      if (media && mediaErrorListener) media.removeEventListener("error", mediaErrorListener);
-      if (media && option.kind === "mp4") { media.removeAttribute("src"); media.load(); }
-      if (mp4BlobUrl) URL.revokeObjectURL(mp4BlobUrl);
+      if (media && option.kind === "hls") { media.removeAttribute("src"); media.load(); }
       hls?.destroy(); hlsRef.current = null;
       if (registered) void invoke("close_stream", { session: streamSession }).catch(() => {});
     };

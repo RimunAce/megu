@@ -10,7 +10,7 @@
   let bound = null, sought = false, targetPosition = initialPosition;
   let active = isTop, last = '', lastSent = 0;
   let selectedLeaf = null, chooseAt = 0, lastPosition = initialPosition, selectedSeen = 0;
-  let lastHealth = '', lastHealthSent = 0, lastMediaError = null;
+  let lastHealth = '', lastHealthSent = 0, lastMediaError = null, videoErrorFatal = false;
   let reportedPlaying = false;
   const startedAt = Date.now();
   const candidates = new Map();
@@ -71,7 +71,7 @@
     if (!video) {
       if (looksLikeChallenge()) {
         sendHealth('challenge', 'Verification required in player');
-      } else if (!reportedPlaying && Date.now() - startedAt > 2500 && looksLikeErrorPage()) {
+      } else if (!reportedPlaying && Date.now() - startedAt > 3500 && looksLikeErrorPage()) {
         sendHealth('dead', 'Embed returned an error page');
       }
       return;
@@ -79,14 +79,18 @@
     if (bound !== video) {
       if (bound && Number.isFinite(bound.currentTime)) targetPosition = bound.currentTime;
       bound = video; sought = false; lastMediaError = null;
+      videoErrorFatal = video.error ? true : false;
       for (const name of ['pause', 'seeked', 'ended']) video.addEventListener(name, () => report(true));
       video.addEventListener('error', () => {
-        const code = video.error && typeof video.error.code === 'number' ? video.error.code : 0;
-        lastMediaError = code ? `Media error ${code}` : 'Video playback error';
-        sendHealth('dead', lastMediaError, true);
+        if (video.readyState >= 2) {
+          videoErrorFatal = true;
+          const code = video.error && typeof video.error.code === 'number' ? video.error.code : 0;
+          lastMediaError = code ? `Media error ${code}` : 'Video playback error';
+          sendHealth('dead', lastMediaError, true);
+        }
       });
     }
-    if (video.error) {
+    if (videoErrorFatal && video.error) {
       const code = typeof video.error.code === 'number' ? video.error.code : 0;
       sendHealth('dead', code ? `Media error ${code}` : 'Video playback error');
       return;

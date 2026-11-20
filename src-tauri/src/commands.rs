@@ -263,17 +263,7 @@ pub fn restore_player_fullscreen(window: tauri::Window, was_fullscreen: bool) ->
 fn same_site_host(candidate: &str, allowed: &str) -> bool {
     let a = candidate.trim_end_matches('.').to_ascii_lowercase();
     let b = allowed.trim_end_matches('.').to_ascii_lowercase();
-    if a == b {
-        return true;
-    }
-    let registrable = |host: &str| -> Option<String> {
-        let parts: Vec<&str> = host.split('.').filter(|p| !p.is_empty()).collect();
-        if parts.len() < 2 {
-            return None;
-        }
-        Some(format!("{}.{}", parts[parts.len() - 2], parts[parts.len() - 1]))
-    };
-    matches!((registrable(&a), registrable(&b)), (Some(x), Some(y)) if x == y)
+    a == b || a.ends_with(&format!(".{b}"))
 }
 
 fn is_allowed_embed_navigation(target: &url::Url, initial_host: &str) -> bool {
@@ -290,15 +280,16 @@ fn is_allowed_embed_navigation(target: &url::Url, initial_host: &str) -> bool {
     if same_site_host(&host, initial_host) {
         return true;
     }
-    // Allow human-verification challenge hosts so Cloudflare / Turnstile can complete.
-    host == "challenges.cloudflare.com"
-        || host.ends_with(".cloudflare.com")
-        || host == "hcaptcha.com"
-        || host.ends_with(".hcaptcha.com")
-        || host == "recaptcha.net"
-        || host.ends_with(".recaptcha.net")
-        || host == "ddos-guard.net"
-        || host.ends_with(".ddos-guard.net")
+    // Allow only the specific third-party widget hosts needed for human checks.
+    matches!(
+        host.as_str(),
+        "challenges.cloudflare.com"
+            | "hcaptcha.com"
+            | "newassets.hcaptcha.com"
+            | "www.google.com"
+            | "www.recaptcha.net"
+            | "ddos-guard.net"
+    )
 }
 
 #[tauri::command]
@@ -479,6 +470,18 @@ mod player_url_tests {
         ));
         assert!(!is_allowed_embed_navigation(
             &url::Url::parse("https://127.0.0.1/evil").unwrap(),
+            "megaplay.buzz"
+        ));
+        assert!(!is_allowed_embed_navigation(
+            &url::Url::parse("https://ads.evil.co.uk/offer").unwrap(),
+            "player.example.co.uk"
+        ));
+        assert!(!is_allowed_embed_navigation(
+            &url::Url::parse("https://other-bucket.s3.amazonaws.com/offer").unwrap(),
+            "player-bucket.s3.amazonaws.com"
+        ));
+        assert!(!is_allowed_embed_navigation(
+            &url::Url::parse("https://evil.cloudflare.com/offer").unwrap(),
             "megaplay.buzz"
         ));
     }

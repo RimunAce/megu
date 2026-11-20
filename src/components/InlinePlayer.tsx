@@ -220,7 +220,7 @@ export default function InlinePlayer({
     };
   }, [record, token, viewer, ignoreDurationHint, option.kind, markSuccess, triggerFailover]);
 
-  const kindLabel = option.kind === "hls" ? "Direct HLS" : option.kind === "mp4" ? "Direct MP4" : "Embed";
+  const kindLabel = option.kind === "hls" ? "Direct HLS" : "Embed";
 
   return <div ref={dialog} className="fixed inset-0 z-[100] flex flex-col bg-black" role="dialog" aria-modal="true" aria-label="Episode player">
     <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 bg-zinc-900 px-4 py-2.5">
@@ -273,7 +273,7 @@ export default function InlinePlayer({
     )}
     <div ref={area} className="relative min-h-0 flex-1 bg-black">
       {error && option.kind !== "embed" && <p role="alert" className="p-4 text-sm text-red-300">{error}</p>}
-      {option.kind === "hls" || option.kind === "mp4"
+      {option.kind === "hls"
         ? <DirectHlsPlayer key={`${option.url}:${resume}`} option={option} resume={resume} audio={record.audio} savedAudioTrack={record.audioTrack} savedSubtitleTrack={record.subtitleTrack} onAudioChange={onAudioChange} onSubtitleChange={onSubtitleChange} onProgress={onDirectProgress} onError={onDirectError} />
         : !isTauri() && <iframe src={option.url} title="Episode player" allow="autoplay; fullscreen; picture-in-picture" allowFullScreen className="size-full border-0" />}
     </div>
