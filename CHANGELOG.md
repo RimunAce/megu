@@ -6,6 +6,41 @@ All notable changes to MEGU are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-20
+
+### Added
+
+- Provider health scoring: tracks success and failure streaks per server and decays penalties after
+  20 minutes so failed providers can be retried.
+- Automatic failover: when a player fails, MEGU automatically tries the next ranked provider or
+  fallback player without losing your place. Manual "Try next source" button available in the player.
+- Safe CDN redirect handling: stream proxy now allows redirects within public HTTPS and validates
+  CDN hosts referenced by playlists so HLS streams work reliably across CDN failovers.
+- Embed hardening: WebView pop-ups are blocked, navigation is restricted to the initial provider
+  domain or explicit human-verification hosts (Cloudflare, hCaptcha, reCAPTCHA, DDoS-Guard).
+- Enhanced player health detection: probe distinguishes verification challenges, loading delays,
+  and fatal errors so false failovers are avoided.
+
+### Changed
+
+- Direct HLS streams now rank above embeds. Direct MP4 support deferred pending ranged-read
+  implementation (was limited to 16 MiB buffering).
+
+### Fixed
+
+- Embed navigation no longer uses registrable-domain matching, which was too broad (all `.co.uk`
+  sites appeared same-site). Now uses strict subdomain-only checks.
+- False-positive `dead` health detection no longer fires on pages titled "Episode 404" or on pre-roll
+  videos; only confirmed error pages with short bodies trigger failover.
+- Fallback provider probes are no longer cancelled by health updates that arrive mid-search.
+- Sub/Dub cache no longer drops the other audio track when switching tracks on the same provider.
+
+### Known limitations
+
+- MP4 playback currently unavailable (deferred to next release pending ranged-read support).
+- Fallback provider selection is automatic and silent; users cannot currently preview alternatives
+  before switching.
+
 ## [0.1.2] - 2026-11-13
 
 ### Changed
