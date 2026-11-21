@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 import type { LoaderCallbacks, LoaderConfiguration, LoaderContext, LoaderStats } from "hls.js";
 import type { Audio, PlayerOption } from "../lib/anivexa";
+import { proxyStreamUrl } from "../lib/streamProxy";
 
 type VideoProgress = { time: number; duration: number; paused: boolean };
 
@@ -32,8 +33,13 @@ export default function DirectHlsPlayer({ option, resume, audio, savedAudioTrack
     let registered = false;
     let hls: import("hls.js").default | null = null;
     let seekListener: (() => void) | null = null;
+    let mediaErrorListener: (() => void) | null = null;
     const start = async () => {
       if (!media) return;
+      // In the desktop app the player loads the stream from the app's loopback
+      // HTTP proxy, so hls.js and the <video> element use plain HTTP with real
+      // Range requests against a local address instead of per-segment IPC.
+      let proxyBase: string | null = null;
       if (isTauri()) {
         const extraHosts = (option.subtitles ?? []).map((track) => track.url);
         await invoke("register_stream", {
@@ -46,8 +52,11 @@ export default function DirectHlsPlayer({ option, resume, audio, savedAudioTrack
         });
         registered = true;
         if (disposed) { await invoke("close_stream", { session: streamSession }); return; }
+        proxyBase = await invoke<string>("stream_proxy_url").catch(() => null);
+        if (disposed) { await invoke("close_stream", { session: streamSession }).catch(() => {}); return; }
       }
       setSubtitleSession(streamSession);
+      const playUrl = proxyBase ? proxyStreamUrl(proxyBase, streamSession, option.url) : option.url;
 
       const seek = () => {
         if (resume > 0 && Number.isFinite(media.duration) && media.duration > resume && media.seekable.length) {
@@ -57,6 +66,14 @@ export default function DirectHlsPlayer({ option, resume, audio, savedAudioTrack
       };
       seekListener = seek;
       media.addEventListener("canplay", seek);
+
+      if (option.kind === "mp4") {
+        mediaErrorListener = () => { if (!disposed) onError("Direct stream failed to load."); };
+        media.addEventListener("error", mediaErrorListener);
+        media.src = playUrl;
+        void media.play().catch(() => {});
+        return;
+      }
 
       const module = await import("hls.js");
       const Hls = module.default;
@@ -94,7 +111,9 @@ export default function DirectHlsPlayer({ option, resume, audio, savedAudioTrack
       }
 
       hls = new Hls({
-        ...(isTauri() ? { loader: TauriLoader } : {}),
+        // With the loopback proxy the default XHR loader already speaks HTTP
+        // to a local server; the IPC loader is only a fallback without it.
+        ...(proxyBase || !isTauri() ? {} : { loader: TauriLoader }),
         startPosition: resume > 0 ? resume : -1,
         fragLoadingMaxRetry: 2,
         manifestLoadingMaxRetry: 1,
@@ -111,7 +130,7 @@ export default function DirectHlsPlayer({ option, resume, audio, savedAudioTrack
         if (!userChoseAudio.current && preferred >= 0) { hls.audioTrack = preferred; setSelectedAudio(preferred); onAudioChange(tracks[preferred].name); }
       });
       hls.attachMedia(media);
-      hls.loadSource(option.url);
+      hls.loadSource(playUrl);
       void media.play().catch(() => {});
 
     };
@@ -119,7 +138,8 @@ export default function DirectHlsPlayer({ option, resume, audio, savedAudioTrack
     return () => {
       disposed = true;
       if (media && seekListener) media.removeEventListener("canplay", seekListener);
-      if (media && option.kind === "hls") { media.removeAttribute("src"); media.load(); }
+      if (media && mediaErrorListener) media.removeEventListener("error", mediaErrorListener);
+      if (media) { media.removeAttribute("src"); media.load(); }
       hls?.destroy(); hlsRef.current = null;
       if (registered) void invoke("close_stream", { session: streamSession }).catch(() => {});
     };

@@ -163,7 +163,7 @@ export function rankPlayerOptions(
   }
   const baseOrder = new Map(options.map((opt, i) => [opt.url, i]));
   const optionScore = (option: PlayerOption): number => {
-    const kindBonus = option.kind === "hls" ? 30 : option.url.includes("/videojs/") ? 8 : 0;
+    const kindBonus = option.kind === "hls" ? 30 : option.kind === "mp4" ? 25 : option.url.includes("/videojs/") ? 8 : 0;
     const hostScore = scoreHealthRow(index.get(optionHost(option.url)), nowSecs);
     return kindBonus + hostScore;
   };

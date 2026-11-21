@@ -1,4 +1,7 @@
 const API = "https://anivexa.respire.my";
+// A single provider can stall indefinitely; bound every request so one hung
+// provider cannot block episode lists, stream lookups, or provider failover.
+export const REQUEST_TIMEOUT_MS = 12_000;
 export const PROVIDERS = ["anikoto", "reanime", "mkissa", "animegg", "animenosub", "anizone", "aniwaves", "senshi", "kaa", "animedunya", "animeonsen", "anipm"] as const;
 export type Provider = typeof PROVIDERS[number];
 export type Audio = "sub" | "dub";
@@ -9,23 +12,34 @@ export interface SubtitleTrack { url: string; label: string; language: string; f
 export interface PlayerOption {
   url: string;
   label: string;
-  kind: "embed" | "hls";
+  kind: "embed" | "hls" | "mp4";
   referer?: string;
   origin?: string;
   userAgent?: string;
   subtitles?: SubtitleTrack[];
 }
 
+function timeoutError(): Error {
+  return new Error("The episode service took too long to respond. Try again or choose another provider.");
+}
+
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let response: Response;
-  try { response = await fetch(`${API}${path}`, { signal, headers: { Accept: "application/json" } }); }
+  try { response = await fetch(`${API}${path}`, { signal: requestSignal, headers: { Accept: "application/json" } }); }
   catch (error) {
     if (signal?.aborted) throw error;
+    if (timeout.aborted) throw timeoutError();
     throw new Error("Could not reach the Anivexa service. Check your connection and try again.");
   }
   if (!response.ok) throw new Error(`Anivexa request failed (${response.status}).`);
   try { return await response.json() as T; }
-  catch { throw new Error("Anivexa returned an invalid response."); }
+  catch (error) {
+    if (signal?.aborted) throw error;
+    if (timeout.aborted) throw timeoutError();
+    throw new Error("Anivexa returned an invalid response.");
+  }
 }
 
 export async function getEpisodes(mediaId: number, provider: Provider, signal?: AbortSignal): Promise<ProviderResponse> {
@@ -108,11 +122,12 @@ export function embedOptions(streams: Stream[]): PlayerOption[] {
     const rawDirect = safeEmbedUrl(stream.url);
     const path = rawDirect ? new URL(rawDirect).pathname.toLowerCase() : "";
     const isHls = type === "hls" || type === "m3u8" || (type !== "embed" && path.endsWith(".m3u8"));
-    if (rawDirect && isHls && !seen.has(rawDirect)) {
+    const isMp4 = type === "mp4" || type === "webm" || path.endsWith(".mp4") || path.endsWith(".webm");
+    if (rawDirect && (isHls || isMp4) && !seen.has(rawDirect)) {
       seen.add(rawDirect);
       const serverName = typeof stream.server === "string" && stream.server.trim() ? stream.server.trim() : "Player";
-      const kind = "hls" as const;
-      const base = `${serverName} · Direct HLS`;
+      const kind = isHls ? ("hls" as const) : ("mp4" as const);
+      const base = `${serverName} · ${isHls ? "Direct HLS" : "Direct MP4"}`;
       const count = (labels.get(base) ?? 0) + 1;
       labels.set(base, count);
       const referer = safeEmbedUrl(stream.referer ?? headerValue(stream.headers, "referer")) ?? undefined;
@@ -147,7 +162,8 @@ export function embedOptions(streams: Stream[]): PlayerOption[] {
   // /videojs/ variants tend to work reliably in a top-level MEGU player webview.
   embeds.sort((a, b) => Number(!a.url.includes("/videojs/")) - Number(!b.url.includes("/videojs/")));
 
-  // Prefer ad-free native HLS streams before third-party embeds. Direct MP4 is
-  // intentionally omitted until MEGU can stream ranged MP4 without buffering it whole.
+  // Prefer ad-free native streams before third-party embeds. Direct HLS and
+  // direct MP4 both play in-app: the desktop app streams them through its
+  // loopback proxy with real HTTP Range requests, so MP4 is no longer buffered whole.
   return [...direct, ...embeds];
 }

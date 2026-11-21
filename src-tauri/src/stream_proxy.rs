@@ -6,26 +6,42 @@
 use std::{
     collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 use tauri::{Manager, State};
 
 #[derive(Clone)]
-struct Session {
-    referer: Option<String>,
-    origin: Option<String>,
-    user_agent: String,
-    permits: Arc<tokio::sync::Semaphore>,
-    allowed_hosts: Arc<Mutex<HashSet<String>>>,
-    clients: Arc<Mutex<HashMap<String, reqwest::Client>>>,
+pub(crate) struct Session {
+    pub(crate) referer: Option<String>,
+    pub(crate) origin: Option<String>,
+    pub(crate) user_agent: String,
+    pub(crate) permits: Arc<tokio::sync::Semaphore>,
+    pub(crate) allowed_hosts: Arc<Mutex<HashSet<String>>>,
+    pub(crate) clients: Arc<Mutex<HashMap<String, reqwest::Client>>>,
+    pub(crate) cancelled: Arc<AtomicBool>,
+    pub(crate) cancel_notify: Arc<tokio::sync::Notify>,
+}
+
+impl Session {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+    pub(crate) fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        self.permits.close();
+        self.cancel_notify.notify_waiters();
+    }
 }
 #[derive(Default)]
-pub struct StreamSessions(Mutex<HashMap<String, Session>>);
+pub struct StreamSessions(pub(crate) Mutex<HashMap<String, Session>>);
 
 const MAX_HOSTS_PER_SESSION: usize = 24;
-const MAX_REDIRECTS: usize = 5;
-const DEFAULT_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+pub(crate) const MAX_REDIRECTS: usize = 5;
+pub(crate) const DEFAULT_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 fn public_v4(ip: Ipv4Addr) -> bool {
     let [a, b, c, _] = ip.octets();
@@ -58,13 +74,13 @@ fn public_v6(ip: Ipv6Addr) -> bool {
         && segments[0] != 0x2002
         && !(segments[0] == 0x2001 && (segments[1] <= 0x01ff || segments[1] == 0x0db8))
 }
-fn checked_url(value: &str) -> Result<url::Url, String> {
+pub(crate) fn checked_url(value: &str) -> Result<url::Url, String> {
     let url = url::Url::parse(value).map_err(|_| "Invalid stream URL".to_string())?;
-    let host = url
-        .host_str()
-        .ok_or("Invalid stream host")?
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
+    let raw_host = url.host_str().ok_or("Invalid stream host")?;
+    if raw_host.is_empty() || raw_host.ends_with('.') {
+        return Err("Only public HTTPS stream URLs are supported".into());
+    }
+    let host = raw_host.to_ascii_lowercase();
     if url.scheme() != "https"
         || !url.username().is_empty()
         || url.password().is_some()
@@ -102,7 +118,7 @@ fn require_main(webview: &tauri::Webview) -> Result<(), String> {
     Ok(())
 }
 
-async fn resolve_public_addrs(host: &str) -> Result<Vec<SocketAddr>, String> {
+pub(crate) async fn resolve_public_addrs(host: &str) -> Result<Vec<SocketAddr>, String> {
     let addresses: Vec<_> = tokio::net::lookup_host((host, 443))
         .await
         .map_err(|_| "Could not resolve the stream host".to_string())?
@@ -113,7 +129,7 @@ async fn resolve_public_addrs(host: &str) -> Result<Vec<SocketAddr>, String> {
     Ok(addresses)
 }
 
-fn build_pinned_client(
+pub(crate) fn build_pinned_client(
     host: &str,
     addresses: &[SocketAddr],
     user_agent: &str,
@@ -129,7 +145,7 @@ fn build_pinned_client(
         .map_err(|e| format!("Could not initialize stream: {e}"))
 }
 
-async fn client_for_host(session: &Session, host: &str) -> Result<reqwest::Client, String> {
+pub(crate) async fn client_for_host(session: &Session, host: &str) -> Result<reqwest::Client, String> {
     let key = host.trim_end_matches('.').to_ascii_lowercase();
     if let Some(existing) = session
         .clients
@@ -156,7 +172,7 @@ async fn client_for_host(session: &Session, host: &str) -> Result<reqwest::Clien
     Ok(client)
 }
 
-fn extract_playlist_hosts(base: &url::Url, body: &[u8]) -> Vec<String> {
+pub(crate) fn extract_playlist_hosts(base: &url::Url, body: &[u8]) -> Vec<String> {
     let Ok(text) = std::str::from_utf8(body) else {
         return Vec::new();
     };
@@ -196,7 +212,7 @@ fn extract_playlist_hosts(base: &url::Url, body: &[u8]) -> Vec<String> {
     hosts
 }
 
-fn allow_host(session: &Session, host: &str) -> Result<(), String> {
+pub(crate) fn allow_host(session: &Session, host: &str) -> Result<(), String> {
     let mut allowed = session
         .allowed_hosts
         .lock()
@@ -211,7 +227,7 @@ fn allow_host(session: &Session, host: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn is_host_allowed(session: &Session, host: &str) -> Result<bool, String> {
+pub(crate) fn is_host_allowed(session: &Session, host: &str) -> Result<bool, String> {
     Ok(session
         .allowed_hosts
         .lock()
@@ -219,7 +235,7 @@ fn is_host_allowed(session: &Session, host: &str) -> Result<bool, String> {
         .contains(host))
 }
 
-fn resolve_redirect(current: &url::Url, location: &str) -> Result<url::Url, String> {
+pub(crate) fn resolve_redirect(current: &url::Url, location: &str) -> Result<url::Url, String> {
     let next = current
         .join(location.trim())
         .map_err(|_| "Stream redirect target was invalid".to_string())?;
@@ -290,6 +306,8 @@ pub async fn register_stream(
             permits: Arc::new(tokio::sync::Semaphore::new(6)),
             allowed_hosts: Arc::new(Mutex::new(allowed_hosts)),
             clients: Arc::new(Mutex::new(clients)),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            cancel_notify: Arc::new(tokio::sync::Notify::new()),
         },
     );
     Ok(())
@@ -439,11 +457,14 @@ pub fn close_stream(
     session: String,
 ) -> Result<(), String> {
     require_main(&webview)?;
-    state
+    if let Some(removed) = state
         .0
         .lock()
         .map_err(|_| "Stream session unavailable")?
-        .remove(&session);
+        .remove(&session)
+    {
+        removed.cancel();
+    }
     Ok(())
 }
 
@@ -476,6 +497,7 @@ mod tests {
     #[test]
     fn restricts_url_shapes() {
         assert!(checked_url("https://cdn.example.org/master.m3u8").is_ok());
+        assert!(checked_url("https://cdn.example.org./master.m3u8").is_err());
         for url in [
             "http://example.com",
             "https://localhost/a",

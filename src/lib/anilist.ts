@@ -34,6 +34,8 @@ export interface Media {
     }[];
   } | null;
   streamingEpisodes: { title: string | null; url: string | null; site: string | null; thumbnail: string | null }[] | null;
+  // detail only: official links, e.g. Netflix for titles providers cannot map
+  externalLinks?: { type: string | null; site: string | null; url: string | null }[] | null;
 }
 
 export interface MediaPage<T> {
@@ -226,6 +228,7 @@ export async function getMedia(id: number): Promise<Media> {
          ${MEDIA_FIELDS}
           status
           streamingEpisodes { title url site thumbnail }
+          externalLinks { type site url }
          startDate { year month day }
          studios { nodes { name } }
          characters(sort: ROLE) {
