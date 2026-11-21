@@ -16,7 +16,7 @@ interface PlayingState {
   resume: number;
 }
 
-export default function Anivexa({ mediaId, title, cover, durationMinutes }: { mediaId: number; title: string; cover?: string | null; durationMinutes?: number | null }) {
+export default function Anivexa({ mediaId, title, cover, durationMinutes, expectedEpisodes }: { mediaId: number; title: string; cover?: string | null; durationMinutes?: number | null; expectedEpisodes?: number | null }) {
   const queryClient = useQueryClient();
   const request = useAppStore((s) => s.playbackRequest);
   const viewer = useAuthStore((s) => s.viewer);
@@ -38,8 +38,8 @@ export default function Anivexa({ mediaId, title, cover, durationMinutes }: { me
   const triedProviders = useRef<Set<Provider>>(new Set());
   const autoProbedEpisodesFor = useRef<string | null>(null);
   const failoverAbort = useRef<AbortController | null>(null);
-  const selectionRef = useRef({ mediaId, provider, audio, episodeNumber: selected?.number ?? null });
-  selectionRef.current = { mediaId, provider, audio, episodeNumber: selected?.number ?? null };
+  const selectionRef = useRef({ mediaId, provider, audio, episodeId: selected?.id ?? null });
+  selectionRef.current = { mediaId, provider, audio, episodeId: selected?.id ?? null };
 
   const refreshHealth = useCallback(async () => {
     const rows = await getProviderHealth();
@@ -87,36 +87,40 @@ export default function Anivexa({ mediaId, title, cover, durationMinutes }: { me
       signal: controller.signal,
     }).then((fallback) => {
       if (controller.signal.aborted) return;
-      autoProbedStreamsFor.current.add(key);
       const active = selectionRef.current;
-      if (active.mediaId !== mediaId || active.provider !== provider || active.audio !== audio || active.episodeNumber !== selected.number) return;
+      if (active.mediaId !== mediaId || active.provider !== provider || active.audio !== audio || active.episodeId !== selected.id) return;
+      autoProbedStreamsFor.current.add(key);
       if (!fallback) return;
       setAutoFallbackNotice(`No usable player on ${provider} for Episode ${selected.number}; switched to ${fallback.provider}.`);
       setProvider(fallback.provider);
       setSelected(fallback.episode);
       setPlayer(fallback.options[0]?.url ?? null);
     });
-    return;
+    return () => controller.abort();
   }, [selected, streams.isFetching, streams.error, streams.data, options.length, playing, mediaId, provider, audio, health]);
 
   // If the initially selected provider has no episodes or errored (and the user
   // didn't explicitly pick it), automatically probe healthy fallback providers.
   useEffect(() => {
-    if (!healthLoaded || userPickedProvider || episodes.isLoading) return;
+    if (!healthLoaded || userPickedProvider || selected || episodes.isLoading) return;
     const empty = !episodes.error && (!Array.isArray(list) || list.length === 0);
     if (!episodes.error && !empty) return;
     const probeKey = `${mediaId}:${audio}:${provider}`;
     if (autoProbedEpisodesFor.current === probeKey) return;
-    autoProbedEpisodesFor.current = probeKey;
     const controller = new AbortController();
     void findAvailableProviderForEpisodes({
       mediaId,
       audio,
       excludeProviders: [provider],
       health,
+      expectedEpisodes,
       signal: controller.signal,
     }).then((found) => {
-      if (!found || controller.signal.aborted) return;
+      if (controller.signal.aborted) return;
+      const active = selectionRef.current;
+      if (active.mediaId !== mediaId || active.provider !== provider || active.audio !== audio || active.episodeId !== null) return;
+      autoProbedEpisodesFor.current = probeKey;
+      if (!found) return;
       queryClient.setQueryData(["anivexaEpisodes", mediaId, found.provider], (previous: { episodes?: Partial<Record<Audio, Episode[]>> } | undefined) => ({
         ...previous,
         episodes: { ...previous?.episodes, [audio]: found.episodes },
@@ -125,7 +129,7 @@ export default function Anivexa({ mediaId, title, cover, durationMinutes }: { me
       setProvider(found.provider);
     });
     return () => controller.abort();
-  }, [healthLoaded, userPickedProvider, episodes.isLoading, episodes.error, list, mediaId, audio, provider, health, queryClient]);
+  }, [healthLoaded, userPickedProvider, selected, episodes.isLoading, episodes.error, list, mediaId, audio, provider, health, expectedEpisodes, queryClient]);
 
   const lastForEpisode = selected ? getPlayback(viewer?.id ?? null).find((r) => r.mediaId === mediaId && r.episodeId === selected.id && r.provider === provider && r.audio === audio) : undefined;
   const current = options.find((option) => option.url === player) ?? (lastForEpisode ? options.find((option) => option.label === lastForEpisode.server) : undefined) ?? options[0];
@@ -135,6 +139,14 @@ export default function Anivexa({ mediaId, title, cover, durationMinutes }: { me
     setPlayer(null);
     setOpenError(null);
     setFailoverMessage(null);
+  };
+
+  // Re-check players for the selected episode, including re-running the
+  // automatic fallback probe when the previous attempt found nothing.
+  const retryStreams = () => {
+    if (!selected) return;
+    autoProbedStreamsFor.current.delete(`${mediaId}:${provider}:${audio}:${selected.number}`);
+    void streams.refetch();
   };
 
   const beginPlayback = (option: PlayerOption, allOptions: PlayerOption[], record: PlaybackRecord, resume: number) => {
@@ -262,17 +274,19 @@ export default function Anivexa({ mediaId, title, cover, durationMinutes }: { me
   useEffect(() => () => { failoverAbort.current?.abort(); }, []);
 
   useEffect(() => {
-    if (request?.mediaId === mediaId && selected && options.length) {
+    if (request?.mediaId === mediaId && selected?.number === request.episode && audio === request.audio && options.length) {
       useAppStore.setState({ playbackRequest: null });
       const savedPlayer = options.find((option) => option.label === request.server) ?? options[0];
-      const record = { ...request, server: savedPlayer.label, cover: cover ?? request.cover, expectedDuration: durationMinutes ? durationMinutes * 60 : request.expectedDuration };
+      // Tie the resume record to the provider and episode id that are actually
+      // loaded now, so progress is not restored against the wrong episode.
+      const record = { ...request, provider, episodeId: selected.id, server: savedPlayer.label, cover: cover ?? request.cover, expectedDuration: durationMinutes ? durationMinutes * 60 : request.expectedDuration };
       if (savedPlayer.label !== request.server) {
         setAutoFallbackNotice(`Previous player ${request.server} is unavailable; selected ${savedPlayer.label} instead.`);
       }
       if (request.position > 0.5) setPrompt({ option: savedPlayer, options, record });
       else beginPlayback(savedPlayer, options, record, 0);
     }
-  }, [request, mediaId, selected, options, cover, durationMinutes]);
+  }, [request, mediaId, provider, audio, selected, options, cover, durationMinutes]);
 
   const directCount = options.filter((o) => o.kind !== "embed").length;
 
@@ -296,8 +310,13 @@ export default function Anivexa({ mediaId, title, cover, durationMinutes }: { me
     {selected && <section className="mt-5" aria-label="Episode player">
       <h4 className="font-semibold">{title} · Episode {selected.number} ({audio})</h4>
       {streams.isFetching && <p className="mt-3 text-sm text-zinc-400">Finding a player…</p>}
-      {streams.error && <div className="mt-3 text-sm text-red-300"><p role="alert">{streams.error.message}</p><button className="mt-2 underline" onClick={() => void streams.refetch()}>Retry</button></div>}
-      {streams.data && !current && <p className="mt-3 text-sm text-zinc-400">No supported player was returned. Try another provider or audio option.</p>}
+      {streams.error && <div className="mt-3 text-sm text-red-300"><p role="alert">{streams.error.message}</p><button className="mt-2 underline" onClick={retryStreams}>Retry</button></div>}
+      {streams.data && !current && !streams.error && !streams.isFetching && (
+        <div className="mt-3 text-sm text-zinc-400">
+          <p>No supported player was returned. Try another provider or audio option.</p>
+          <button className="mt-2 underline" onClick={retryStreams}>Retry</button>
+        </div>
+      )}
       {current && <><div className="mt-3 flex flex-wrap items-center gap-3"><label className="text-sm">Player <select value={current.url} onChange={(e) => setPlayer(e.target.value)} className="ml-2 rounded border border-zinc-700 bg-zinc-800 px-3 py-2">{options.map((o) => <option key={o.url} value={o.url}>{o.label}</option>)}</select></label><button onClick={start} className="rounded bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-zinc-200">Play in MEGU</button><button onClick={() => { setOpenError(null); void openStreamUrl(current.url).catch((e: unknown) => setOpenError(String(e))); }} className="text-sm text-zinc-300 underline">Open in browser ↗</button><button onClick={reset} className="text-sm text-zinc-300 underline">Close</button></div>
         {openError && <p role="alert" className="mt-2 text-sm text-red-300">{openError}</p>}
         {playing && <InlinePlayer option={playing.option} options={playing.options} onSelectOption={handleSelectOptionInPlayer} onTryNextSource={handleTryNextSource} switchingSource={switchingSource} failoverMessage={failoverMessage} record={playing.record} resume={playing.resume} onClose={() => { failoverAbort.current?.abort(); setSwitchingSource(false); setPlaying(null); void refreshHealth(); }} />}

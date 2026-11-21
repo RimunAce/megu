@@ -2,6 +2,7 @@ mod auth;
 mod animepahe;
 mod commands;
 mod db;
+mod local_proxy;
 mod stream_proxy;
 mod artwork;
 
@@ -29,6 +30,11 @@ pub fn run() {
       app.manage(auth::OAuthAttempts::default());
       app.manage(animepahe::VerificationState::default());
       app.manage(stream_proxy::StreamSessions::default());
+
+      // Loopback HTTP proxy so the in-app player can stream video from a
+      // local network address instead of routing every segment over IPC.
+      let proxy_port = local_proxy::start(app.handle().clone())?;
+      app.manage(local_proxy::LocalProxy::new(proxy_port));
 
       Ok(())
     })
@@ -62,6 +68,7 @@ pub fn run() {
       stream_proxy::register_stream,
       stream_proxy::fetch_stream,
       stream_proxy::close_stream,
+      local_proxy::stream_proxy_url,
       commands::open_animepahe,
       commands::save_list_snapshot,
       commands::get_list_snapshot,
