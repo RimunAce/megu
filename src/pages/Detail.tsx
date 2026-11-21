@@ -119,7 +119,24 @@ export default function DetailPage({ id }: { id: number }) {
 
           <section id="episodes" className="mt-10 scroll-mt-24">
             <h2 className="mb-3 text-xl font-bold">Where to watch</h2>
-            <Anivexa key={id} title={title} mediaId={id} cover={media.coverImage?.large} durationMinutes={media.duration} />
+            {(() => {
+              const official = (media.externalLinks ?? []).filter((link) => link.type === "STREAMING" && typeof link.url === "string" && link.url.startsWith("https://"));
+              if (!official.length) return null;
+              return (
+                <div className="mb-4 grid gap-2 sm:grid-cols-2">
+                  {official.map((link) => (
+                    <button key={link.url} onClick={() => {
+                      setStreamError(null);
+                      void openStreamUrl(link.url!).catch((e: unknown) => setStreamError(e instanceof Error ? e.message : String(e)));
+                    }} className="flex items-center gap-3 rounded-lg bg-zinc-800 p-3 text-left transition hover:bg-zinc-700">
+                      <Play className="size-4 shrink-0" />
+                      <span><span className="block text-sm font-medium">{link.site || "Official stream"}</span><span className="text-xs text-zinc-400">Licensed streaming service ↗</span></span>
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
+            <Anivexa key={id} title={title} mediaId={id} cover={media.coverImage?.large} durationMinutes={media.duration} expectedEpisodes={media.episodes} />
             <details className="mb-6"><summary className="cursor-pointer text-sm text-zinc-400">AnimePahe (manual verification)</summary><AnimePahe key={id} title={title} mediaId={id} /></details>
             <p className="mb-4 text-sm text-zinc-400">Episode links supplied by AniList open on the provider's website. Availability varies by region.</p>
             {streamError && <p role="alert" className="mb-3 text-sm text-red-400">{streamError}</p>}
