@@ -6,6 +6,32 @@ All notable changes to MEGU are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-21
+
+### Added
+
+- Loopback HTTP stream proxy (`127.0.0.1` ephemeral port): HLS and direct MP4 streams now play over
+  local HTTP with real `Range` requests, playlist rewriting, DNS-rebinding/Origin guards, connection
+  and per-session concurrency limits, idle timeouts, and immediate cancellation on player close.
+- Direct MP4/WebM playback inside the in-app player (ranked below HLS and above embeds), unblocking
+  MP4-only providers.
+- Official streaming links from AniList (`externalLinks` of type `STREAMING`) under "Where to watch".
+
+### Changed
+
+- Provider fallback now probes health-ranked candidates concurrently (up to 4 at once) with a 12s
+  per-request timeout and prefers providers matching AniList's expected episode count over fast
+  partial episode lists.
+- Updated npm and Cargo minor dependencies (Dependabot PRs #14 and #15).
+
+### Fixed
+
+- Canonicalized stream hostnames in URL validation so trailing-dot hostnames cannot bypass DNS
+  pinning.
+- Preserved bounded `200` → `206` byte-range slicing when a CDN ignores `Range` headers.
+- Stale auto-fallback probes are aborted on selection change, empty player results are retryable,
+  and `DirectHlsPlayer` rechecks disposal after awaiting the proxy URL.
+
 ## [0.2.0] - 2026-11-20
 
 ### Added
